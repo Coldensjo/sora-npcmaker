@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sorairei NPC Maker</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <script src="data.js"></script>
+    <script src="outfit_data.js"></script>
+</head>
+<body>
+    <header class="rpg-header">
+        <h1 style="font-family: 'Cinzel Decorative', cursive; color: var(--accent); text-shadow: 0 2px 8px rgba(180,140,58,0.5); font-size: 24px; letter-spacing: 2px;">Sorairei <span style="color: #dfd3be; font-size: 16px; letter-spacing: 1px; font-weight: 400;">NPC Maker</span></h1>
+        <div class="header-actions">
+            <button id="btn-info" class="info-circle-btn" onclick="window.showHelpModal()" title="About / Help">i</button>
+            <button id="btn-new" class="rpg-btn" onclick="window.resetNPC()">New NPC</button>
+            <button id="btn-generate" class="rpg-btn highlight" onclick="window.showLuaModal()">Generate .LUA</button>
+        </div>
+    </header>
+
+    <div class="rpg-layout-container">
+    <div class="rpg-layout">
+        <!-- Sidebar -->
+        <aside class="rpg-sidebar">
+            <div class="rpg-panel preview-panel">
+                <h2 class="panel-title">Character Preview</h2>
+                <div class="character-preview">
+                    <img id="preview-outfit" src="https://outfit-images-oracle.ots.me/latest_walk/animoutfit.php?id=128&addons=0&head=0&body=0&legs=0&feet=0&mount=0&direction=3" alt="Outfit Preview">
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main -->
+        <main class="rpg-main">
+            <!-- Tabs -->
+            <nav class="rpg-tabs">
+                <button class="tab-btn active" data-target="tab-basic">Basic Config</button>
+                <button class="tab-btn" data-target="tab-shop">Shop (Catalog/Trade)</button>
+                <button class="tab-btn" data-target="tab-dialogue">Dialogue</button>
+                <button class="tab-btn" data-target="tab-keywords">Keywords</button>
+            </nav>
+
+            <!-- Basic -->
+            <div id="tab-basic" class="tab-content active rpg-panel">
+                <h2 class="panel-title">General Settings</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>NPC Name</label>
+                        <input type="text" id="npc-name" class="rpg-input" placeholder="e.g. King Tibianus" value="NPC Name">
+                    </div>
+                    <div class="form-group">
+                        <label>Walk Interval (ms)</label>
+                        <input type="number" id="npc-walk-interval" class="rpg-input" value="2000">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Health</label>
+                        <input type="number" id="npc-health" class="rpg-input" value="100">
+                    </div>
+                    <div class="form-group">
+                        <label>Walk Radius</label>
+                        <input type="number" id="npc-walk-radius" class="rpg-input" value="2">
+                    </div>
+                </div>
+
+                <!-- Outfitter -->
+                <div style="margin-top: 24px; border-top: 1px solid var(--border-dark); padding-top: 20px; box-shadow: 0 -1px 0 var(--border-light);">
+                    <h2 class="panel-title" style="margin-bottom:16px;">Outfitter</h2>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start;">
+                        <!-- Left: Outfit selector -->
+                        <div>
+                            <div class="form-group">
+                                <label>Outfit Type</label>
+                                <div id="outfit-type-filter" style="display:flex; gap:5px; margin-bottom:8px;">
+                                    <button type="button" class="rpg-btn outfit-filter-btn active" data-filter="male" onclick="window.filterOutfits('male',this)">Male</button>
+                                    <button type="button" class="rpg-btn outfit-filter-btn" data-filter="female" onclick="window.filterOutfits('female',this)">Female</button>
+                                    <button type="button" class="rpg-btn outfit-filter-btn" data-filter="monster" onclick="window.filterOutfits('monster',this)">Monster</button>
+                                </div>
+                                <select id="outfit-select" class="rpg-input"></select>
+                            </div>
+
+                            <div class="addons-grid">
+                                <label class="rpg-checkbox"><input type="checkbox" id="addon1"> Addon 1</label>
+                                <label class="rpg-checkbox"><input type="checkbox" id="addon2"> Addon 2</label>
+                                <label class="rpg-checkbox"><input type="checkbox" id="mount-check"> Mount</label>
+                            </div>
+
+                            <div class="form-group" id="mount-selector-group" style="margin-top:10px; display:none;">
+                                <label>Mount Type</label>
+                                <select id="mount-select" class="rpg-input" onchange="window.updatePreview()"></select>
+                            </div>
+                        </div>
+
+                        <!-- Colors -->
+                        <div class="color-control-panel">
+                            <label class="control-label">Color</label>
+                            <div id="palette-grid" class="palette-grid">
+                                <!-- JS injected 7x19 grid -->
+                            </div>
+                            <div class="color-part-selector">
+                                <button id="btn-part-head" class="rpg-btn part-btn active" data-part="head">Head</button>
+                                <button id="btn-part-body" class="rpg-btn part-btn" data-part="body">Primary</button>
+                                <button id="btn-part-legs" class="rpg-btn part-btn" data-part="legs">Secondary</button>
+                                <button id="btn-part-feet" class="rpg-btn part-btn" data-part="feet">Detail</button>
+                            </div>
+                            <div class="color-random-row">
+                                <button class="rpg-btn" onclick="window.randomizeColors('colors')">Color Random</button>
+                                <button class="rpg-btn" onclick="window.randomizeColors('full')">Full Random</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Shop -->
+            <div id="tab-shop" class="tab-content rpg-panel" style="flex-direction:column; height:680px; position: relative;">
+                <h2 class="panel-title">Trade Settings</h2>
+                
+                <!-- 1. Top Row: Search & Price settings -->
+                <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-end; margin-bottom: 20px; flex-shrink:0;">
+                     <div class="form-group autocomplete-wrapper" style="flex:2; margin-bottom:0;">
+                         <label>Find Item (ID or Name)</label>
+                         <input type="text" id="shop-item-search" class="rpg-input" placeholder="Type item ID or Name (e.g. 2160 or coin)">
+                         <div id="shop-item-dropdown" class="suggestions-dropdown autocomplete-dropdown"></div>
+                     </div>
+                     <div class="form-group" style="flex:1; margin-bottom:0;">
+                         <label>Buy Price</label>
+                         <input type="number" id="shop-buy-price" class="rpg-input" min="0" value="0">
+                     </div>
+                     <div class="form-group" style="flex:1; margin-bottom:0;">
+                         <label>Sell Price</label>
+                         <input type="number" id="shop-sell-price" class="rpg-input" min="0" value="0">
+                     </div>
+                     <button id="btn-add-item" class="rpg-btn highlight" style="margin-bottom:2px;" onclick="window.addTradeItem()">Add to Trade</button>
+                </div>
+
+                <!-- 2. Middle Row: Categories (Full Width) -->
+                <div style="background: #111; padding: 12px; border: 1px solid var(--border-light); border-radius: 6px; margin-bottom: 16px; flex-shrink:0;">
+                    <label style="font-size: 11px; color:var(--accent); font-weight:bold; margin-bottom: 8px; display:block; text-transform: uppercase; letter-spacing: 1px;">Filter by Category</label>
+                    <div id="category-filters">
+                        <!-- JS injected options -->
+                    </div>
+                </div>
+
+                <!-- 3. Bottom Row: Symmetrical Columns -->
+                <div style="display: flex; gap: 16px; flex: 1; min-height: 0; overflow: hidden;">
+                    <!-- Catalog -->
+                    <div style="flex: 1; display:flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border-dark); background: var(--bg-main); border-radius: 6px;">
+                        <div style="padding: 8px 12px; background: #000; border-bottom: 1px solid var(--border-light); font-size: 11px; color:#aaa; font-weight:bold; flex-shrink:0;">
+                            Available Items
+                        </div>
+                        <div id="catalog-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(75px, 1fr)); gap: 10px; overflow-y:auto; padding: 12px; flex:1;">
+                            <!-- items -->
+                        </div>
+                    </div>
+                    
+                    <!-- Trade List -->
+                    <div style="flex: 1; display:flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border-dark); background: var(--bg-main); border-radius: 6px;">
+                        <div style="padding: 8px 12px; background: #000; border-bottom: 1px solid var(--border-light); font-size: 11px; color:#aaa; font-weight:bold; flex-shrink:0;">
+                            Current Trade List
+                        </div>
+                        <div style="flex: 1; overflow-y:auto;">
+                        <table class="rpg-table">
+                            <thead style="position: sticky; top: 0; z-index:5;">
+                                <tr>
+                                    <th style="width: 50px;">Icon</th>
+                                    <th>Name</th>
+                                    <th>Buy</th>
+                                    <th>Sell</th>
+                                    <th style="width: 60px; text-align:center;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="shop-items-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dialogue -->
+            <div id="tab-dialogue" class="tab-content rpg-panel">
+                <h2 class="panel-title">Default Dialogue</h2>
+                <div class="form-row">
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>Greet Message</label>
+                        <input type="text" id="msg-greet" class="rpg-input" value="Hello |PLAYERNAME|.">
+                    </div>
+                    <div class="form-group">
+                        <label>Farewell Message</label>
+                        <input type="text" id="msg-farewell" class="rpg-input" value="Farewell.">
+                    </div>
+                    <div class="form-group">
+                        <label>Walkaway Message</label>
+                        <input type="text" id="msg-walkaway" class="rpg-input" value="How rude!">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Keywords -->
+            <div id="tab-keywords" class="tab-content rpg-panel">
+                <h2 class="panel-title">Custom Keywords</h2>
+                <div style="display:flex; justify-content:space-between; gap:20px; align-items:flex-end;">
+                     <div class="form-group" style="flex:1; margin-bottom:0;">
+                         <label>Keyword (e.g. 'help')</label>
+                         <input type="text" id="kw-trigger" class="rpg-input" placeholder="Type trigger word">
+                     </div>
+                     <div class="form-group" style="flex:2; margin-bottom:0;">
+                         <label>Response</label>
+                         <input type="text" id="kw-response" class="rpg-input" placeholder="Type NPC response">
+                     </div>
+                     <button id="btn-add-kw" class="rpg-btn highlight" style="margin-bottom:2px;" onclick="window.addKeyword()">Add</button>
+                </div>
+
+                <div style="margin-top: 20px; max-height:350px; overflow-y:auto; border: 1px solid #000;">
+                    <table class="rpg-table">
+                        <thead>
+                            <tr>
+                                <th>Keyword</th>
+                                <th>Response</th>
+                                <th style="width: 80px; text-align:center;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="keywords-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+    </div> <!-- End rpg-layout-container -->
+
+    <!-- Modal -->
+    <div id="output-modal" class="modal-overlay">
+        <div class="modal-box rpg-panel">
+            <h2 class="panel-title">Generated Canary LUA Script</h2>
+            <textarea id="lua-output" class="code-output" readonly></textarea>
+            <div style="display:flex; justify-content:flex-end; gap: 15px;">
+                <button id="btn-close-modal" class="rpg-btn" onclick="window.closeLuaModal()">Close</button>
+                <button id="btn-download" class="rpg-btn highlight" onclick="window.downloadLua()">Download .lua</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help -->
+    <div id="help-modal" class="modal-overlay">
+        <div class="modal-box rpg-panel" style="max-width: 650px; padding: 0; overflow: hidden; border: 1px solid #444; box-shadow: 0 20px 50px rgba(0,0,0,0.9); background: #222;">
+            <div style="background: #333; padding: 15px 25px; border-bottom: 2px solid var(--accent); display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="margin:0; font-size: 20px; color: #fff; font-weight: 700;">About Sorairei NPC Maker</h2>
+                <button onclick="window.closeHelpModal()" style="background:none; border:none; color:#aaa; font-size:24px; cursor:pointer; line-height:1;">&times;</button>
+            </div>
+            
+            <div style="padding: 25px; max-height: 80vh; overflow-y: auto; color: #ccc;">
+                <p style="margin-bottom: 25px; font-size: 14px; opacity: 0.8;">A modern, web-based visual editor for creating NPCs for Canary OTServ and Global Servers.</p>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
+                    <div style="background: #2a2a2a; padding: 15px; border-radius: 4px; border-left: 3px solid var(--accent);">
+                        <div style="color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase;">Version</div>
+                        <div style="color: #fff; font-size: 15px;">v1.4.0 (Cinematic)</div>
+                    </div>
+                    <div style="background: #2a2a2a; padding: 15px; border-radius: 4px; border-left: 3px solid var(--accent);">
+                        <div style="color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase;">Status</div>
+                        <div style="color: #fff; font-size: 15px;">Canary/Crystal</div>
+                    </div>
+                    <div style="background: #2a2a2a; padding: 15px; border-radius: 4px; border-left: 3px solid var(--accent);">
+                        <div style="color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase;">Developed by</div>
+                        <div style="color: #fff; font-size: 15px;">Gemini & Sorairei</div>
+                    </div>
+                    <div style="background: #2a2a2a; padding: 15px; border-radius: 4px; border-left: 3px solid var(--accent);">
+                        <div style="color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase;">Repository</div>
+                        <div style="color: #fff; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            <a href="https://github.com/Sorairei/sora-npcmaker" target="_blank" style="color:#dfd3be; text-decoration:none;">github.com/Sorairei/sora-npcmaker</a>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 30px;">
+                    <h3 style="color: var(--accent); font-size: 14px; text-transform: uppercase; margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
+                        🎯 Features
+                    </h3>
+                    <ul style="list-style: none; padding: 0; margin: 0; line-height: 1.8; font-size: 14px;">
+                        <li style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px;">
+                            <span style="color: var(--accent);">•</span> Visual character editor with 249+ outfits
+                        </li>
+                        <li style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px;">
+                            <span style="color: var(--accent);">•</span> Complete shop system (buy/sell items)
+                        </li>
+                        <li style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px;">
+                            <span style="color: var(--accent);">•</span> Custom conversation messages
+                        </li>
+                        <li style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px;">
+                            <span style="color: var(--accent);">•</span> Keywords system for interactions
+                        </li>
+                        <li style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px;">
+                            <span style="color: var(--accent);">•</span> Real-time character preview
+                        </li>
+                        <li style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px;">
+                            <span style="color: var(--accent);">•</span> Lua script generation and export
+                        </li>
+                    </ul>
+                </div>
+
+                <div style="padding-top: 20px; border-top: 1px solid #333; font-size: 12px; opacity: 0.7;">
+                    <p>Using outfit generator from <a href="https://outfit-images.ots.me/" target="_blank" style="color: var(--accent); text-decoration: none;">outfit-images.ots.me</a>. Credits to the original authors.</p>
+                </div>
+            </div>
+            
+            <div style="background: #1a1a1a; padding: 15px; text-align: center;">
+                <button class="rpg-btn highlight" style="padding: 8px 30px;" onclick="window.closeHelpModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="generator.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
