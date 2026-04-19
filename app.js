@@ -3,10 +3,10 @@
 // State
 window.NPC = {
     state: {
-        name: 'Sorairei',
-        walkInterval: 2000,
-        health: 100,
-        walkRadius: 2,
+        name: '',
+        walkInterval: null,
+        health: null,
+        walkRadius: null,
         outfit: { lookType: 128, lookHead: 0, lookBody: 0, lookLegs: 0, lookFeet: 0, lookAddons: 0, mount: 0 },
         tradeItems: [],
         dialogue: { greet: 'Hello |PLAYERNAME|.', farewell: 'Farewell.', walkaway: 'How rude!' },
