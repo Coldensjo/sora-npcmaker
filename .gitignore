@@ -1,0 +1,22 @@
+# Reference checkout (not part of this project)
+/remeres-map-editor-redux
+
+# Tibia client game files — do not distribute (copyrighted) and large/binary.
+# The app loads these at runtime from here; each user supplies their own.
+/assets/
+*.dat
+*.spr
+*.otb
+
+# OS / editor cruft
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+*~
+.vscode/
+.idea/
+
+# Node
+node_modules/
+npm-debug.log*
