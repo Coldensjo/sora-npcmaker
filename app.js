@@ -321,22 +321,29 @@ async function persistNpcState(index, state, options) {
                 return false;
             }
             var xmlPath = npc.xmlRelativePath || npc.relativePath;
-            var xmlContent = window.generateNpcXml(state, npc.xmlSource || '');
+            var xmlContent = (npc.xmlSource && typeof window.patchNpcXml === 'function')
+                ? window.patchNpcXml(state, npc.xmlSource)
+                : window.generateNpcXml(state, npc.xmlSource || '');
             await writeTextFileToDir(dir, xmlPath, xmlContent);
             npc.xmlSource = xmlContent;
 
-            if (npc.scriptRelativePath && typeof window.generateClassicScript === 'function') {
-                var scriptContent = window.generateClassicScript(state, npc.scriptSource || '');
+            if (npc.scriptRelativePath) {
+                var patchScript = typeof window.patchClassicScript === 'function'
+                    ? window.patchClassicScript
+                    : window.generateClassicScript;
+                var scriptContent = patchScript(state, npc.scriptSource || '');
                 await writeTextFileToDir(dir, npc.scriptRelativePath, scriptContent);
                 npc.scriptSource = scriptContent;
             }
         } else {
-            if (typeof window.generateLUA !== 'function') {
+            if (typeof window.generateLUA !== 'function' && typeof window.patchRevscriptLua !== 'function') {
                 if (!silent) alert('Generator not loaded');
                 return false;
             }
             var savePath = getSavePathForNpc(npc, state);
-            var lua = window.generateLUA(state);
+            var lua = (npc.luaSource && typeof window.patchRevscriptLua === 'function')
+                ? window.patchRevscriptLua(state, npc.luaSource)
+                : window.generateLUA(state);
             await writeTextFileToDir(dir, savePath, lua);
             npc.luaSource = lua;
         }

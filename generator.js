@@ -97,7 +97,319 @@ window.generateLUA = function(state) {
 	return lua;
 };
 
-// Classic TFS / XML NPC script (NpcHandler + ShopModule)
+(function () {
+	const safeLuaStr = (str) => {
+		if (!str) return '';
+		return String(str)
+			.replace(/\\/g, '\\\\')
+			.replace(/"/g, '\\"')
+			.replace(/\n/g, '\\n');
+	};
+
+	const classicItemLabel = (name) => (name || 'item').toLowerCase().replace(/'/g, "\\'");
+	const classicKeywordTrigger = (str) => String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+	const normalizeNewlines = (text) => String(text || '').replace(/\r\n/g, '\n');
+
+	const escapeXmlAttr = (str) => String(str || '')
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+
+	function skipBalancedStatement(lines, startIdx) {
+		var depth = 0;
+		var started = false;
+		for (var i = startIdx; i < lines.length; i++) {
+			var line = lines[i];
+			for (var c = 0; c < line.length; c++) {
+				if (line[c] === '(') { depth++; started = true; }
+				else if (line[c] === ')') depth--;
+			}
+			if (started && depth <= 0) return i + 1;
+		}
+		return startIdx + 1;
+	}
+
+	function skipFunctionBlock(lines, startIdx) {
+		var fnDepth = 0;
+		for (var n = startIdx; n < lines.length; n++) {
+			var trimmed = lines[n].trim();
+			if (/= function\s*\(/.test(trimmed) || /^function\b/.test(trimmed)) fnDepth++;
+			if (/\bend\b/.test(trimmed)) {
+				fnDepth--;
+				if (fnDepth <= 0) return n + 1;
+			}
+		}
+		return startIdx + 1;
+	}
+
+	function isClassicManagedLine(trimmed) {
+		return /^keywordHandler:addKeyword\s*\(/.test(trimmed) ||
+			/^shopModule:addBuyableItem\s*\(/.test(trimmed) ||
+			/^shopModule:addSellableItem\s*\(/.test(trimmed) ||
+			/^local shopModule = ShopModule:new\(\)/.test(trimmed) ||
+			/^npcHandler:addModule\(shopModule\)/.test(trimmed);
+	}
+
+	function buildClassicShopLines(state) {
+		var lines = [];
+		if (!state.tradeItems || !state.tradeItems.length) return lines;
+		lines.push('local shopModule = ShopModule:new()');
+		lines.push('npcHandler:addModule(shopModule)');
+		lines.push('');
+		state.tradeItems.forEach(function (item) {
+			var label = classicItemLabel(item.name);
+			var id = parseInt(item.id, 10) || 0;
+			if (item.buy > 0) {
+				lines.push("shopModule:addBuyableItem({'" + label + "'}, " + id + ', ' + parseInt(item.buy, 10) + ')');
+			}
+			if (item.sell > 0) {
+				lines.push("shopModule:addSellableItem({'" + label + "'}, " + id + ', ' + parseInt(item.sell, 10) + ')');
+			}
+		});
+		if (lines[lines.length - 1] !== '') lines.push('');
+		return lines;
+	}
+
+	function buildClassicKeywordLines(state) {
+		var lines = [];
+		(state.keywords || []).forEach(function (kw) {
+			lines.push("keywordHandler:addKeyword({'" + classicKeywordTrigger(kw.trigger) + "'}, StdModule.say, {npcHandler = npcHandler, onlyFocus = true, text = \"" + safeLuaStr(kw.response) + '"})');
+		});
+		if (lines.length) lines.push('');
+		return lines;
+	}
+
+	function findClassicInsertIndex(lines) {
+		for (var i = 0; i < lines.length; i++) {
+			var t = lines[i].trim();
+			if (/^npcHandler:setCallback\(/.test(t) || /^npcHandler:addModule\(FocusModule/.test(t)) {
+				return i;
+			}
+		}
+		return lines.length;
+	}
+
+	window.patchClassicScript = function (state, existingSource) {
+		if (!existingSource || !String(existingSource).trim()) {
+			return window.generateClassicScript(state, null);
+		}
+
+		var lines = normalizeNewlines(existingSource).split('\n');
+		var kept = [];
+		var i = 0;
+		while (i < lines.length) {
+			var trimmed = lines[i].trim();
+			if (isClassicManagedLine(trimmed)) {
+				i = skipBalancedStatement(lines, i);
+				continue;
+			}
+			kept.push(lines[i]);
+			i++;
+		}
+
+		var insert = buildClassicShopLines(state).concat(buildClassicKeywordLines(state));
+		var insertAt = findClassicInsertIndex(kept);
+		if (insert.length) {
+			Array.prototype.splice.apply(kept, [insertAt, 0].concat(insert));
+		}
+
+		return kept.join('\n').replace(/\n{3,}/g, '\n\n');
+	};
+
+	function replaceLuaAssignment(source, key, valueLine) {
+		var re = new RegExp('^\\s*' + key.replace(/\./g, '\\.') + '\\s*=.*$', 'm');
+		if (re.test(source)) return source.replace(re, valueLine);
+		return source;
+	}
+
+	function replaceBracedAssignment(source, key, innerLines) {
+		var re = new RegExp('(' + key.replace(/\./g, '\\.') + '\\s*=\\s*)\\{', 'm');
+		var m = source.match(re);
+		if (!m) return source;
+		var start = m.index + m[0].length - 1;
+		var depth = 0;
+		var end = start;
+		for (var i = start; i < source.length; i++) {
+			if (source[i] === '{') depth++;
+			else if (source[i] === '}') {
+				depth--;
+				if (depth === 0) { end = i; break; }
+			}
+		}
+		var block = key + ' = {\n' + innerLines + '\n}';
+		return source.slice(0, m.index) + block + source.slice(end + 1);
+	}
+
+	function replaceSetMessage(source, constant, message) {
+		var re = new RegExp('npcHandler:setMessage\\(\\s*' + constant + '\\s*,\\s*"((?:[^"\\\\]|\\\\.)*)"\\s*\\)', 'm');
+		if (re.test(source)) {
+			return source.replace(re, 'npcHandler:setMessage(' + constant + ', "' + safeLuaStr(message) + '")');
+		}
+		re = new RegExp("npcHandler:setMessage\\(\\s*" + constant + "\\s*,\\s*'((?:[^'\\\\]|\\\\.)*)'\\s*\\)", 'm');
+		if (re.test(source)) {
+			return source.replace(re, 'npcHandler:setMessage(' + constant + ', "' + safeLuaStr(message) + '")');
+		}
+		return source;
+	}
+
+	function stripRevscriptManagedBlocks(lines) {
+		var kept = [];
+		var i = 0;
+		while (i < lines.length) {
+			var trimmed = lines[i].trim();
+			if (/^keywordHandler:addKeyword\s*\(/.test(trimmed)) {
+				i = skipBalancedStatement(lines, i);
+				continue;
+			}
+			if (/^npcConfig\.shop\s*=/.test(trimmed)) {
+				i = skipBalancedStatement(lines, i);
+				continue;
+			}
+			if (/^npcType\.onBuyItem\s*=/.test(trimmed) || /^npcType\.onSellItem\s*=/.test(trimmed) || /^npcType\.onCheckItem\s*=/.test(trimmed)) {
+				i = skipFunctionBlock(lines, i);
+				continue;
+			}
+			kept.push(lines[i]);
+			i++;
+		}
+		return kept;
+	}
+
+	function buildRevscriptKeywordLines(state) {
+		var lines = [];
+		(state.keywords || []).forEach(function (kw) {
+			lines.push('keywordHandler:addKeyword({ "' + safeLuaStr(kw.trigger) + '" }, StdModule.say, { npcHandler = npcHandler, text = "' + safeLuaStr(kw.response) + '" })');
+		});
+		if (lines.length) lines.push('');
+		return lines;
+	}
+
+	function buildRevscriptShopBlock(state) {
+		if (!state.tradeItems || !state.tradeItems.length) return [];
+		var lines = ['npcConfig.shop = {'];
+		state.tradeItems.forEach(function (item) {
+			var buyStr = item.buy > 0 ? ', buy = ' + parseInt(item.buy, 10) : '';
+			var sellStr = item.sell > 0 ? ', sell = ' + parseInt(item.sell, 10) : '';
+			lines.push('\t{ itemName = "' + safeLuaStr(item.name) + '", clientId = ' + item.id + buyStr + sellStr + ' },');
+		});
+		lines.push('}');
+		lines.push('-- On buy npc shop message');
+		lines.push('npcType.onBuyItem = function(npc, player, itemId, subType, amount, ignore, inBackpacks, totalCost)');
+		lines.push('\tnpc:sellItem(player, itemId, amount, subType, 0, ignore, inBackpacks)');
+		lines.push('end');
+		lines.push('-- On sell npc shop message');
+		lines.push('npcType.onSellItem = function(npc, player, itemId, subtype, amount, ignore, name, totalCost)');
+		lines.push('\tplayer:sendTextMessage(MESSAGE_TRADE, string.format("Sold %ix %s for %i gold.", amount, name, totalCost))');
+		lines.push('end');
+		lines.push('-- On check npc shop message (look item)');
+		lines.push('npcType.onCheckItem = function(npc, player, clientId, subType) end');
+		lines.push('');
+		return lines;
+	}
+
+	function findRevscriptInsertIndex(lines) {
+		for (var i = 0; i < lines.length; i++) {
+			var t = lines[i].trim();
+			if (/^npcHandler:addModule\(FocusModule/.test(t) || /^npcType:register\(/.test(t)) {
+				return i;
+			}
+		}
+		return lines.length;
+	}
+
+	window.patchRevscriptLua = function (state, existingSource) {
+		if (!existingSource || !String(existingSource).trim()) {
+			return window.generateLUA(state);
+		}
+
+		var source = normalizeNewlines(existingSource);
+		var name = safeLuaStr(state.name || 'Default NPC');
+		var o = state.outfit || {};
+		var d = state.dialogue || {};
+
+		source = source.replace(/local internalNpcName\s*=\s*"((?:[^"\\]|\\.)*)"/, 'local internalNpcName = "' + name + '"');
+		source = source.replace(/local internalNpcName\s*=\s*'((?:[^'\\]|\\.)*)'/, 'local internalNpcName = "' + name + '"');
+		source = replaceLuaAssignment(source, 'npcConfig.name', 'npcConfig.name = "' + name + '"');
+		source = replaceLuaAssignment(source, 'npcConfig.walkInterval', 'npcConfig.walkInterval = ' + (parseInt(state.walkInterval, 10) || 2000));
+		source = replaceLuaAssignment(source, 'npcConfig.walkRadius', 'npcConfig.walkRadius = ' + (parseInt(state.walkRadius, 10) || 2));
+
+		var outfitInner =
+			'\tlookType = ' + (o.lookType || 128) + ',\n' +
+			'\tlookHead = ' + (o.lookHead || 0) + ',\n' +
+			'\tlookBody = ' + (o.lookBody || 0) + ',\n' +
+			'\tlookLegs = ' + (o.lookLegs || 0) + ',\n' +
+			'\tlookFeet = ' + (o.lookFeet || 0) + ',';
+		if (/npcConfig\.outfit\s*=\s*\{/.test(source)) {
+			source = replaceBracedAssignment(source, 'npcConfig.outfit', outfitInner);
+		}
+
+		source = replaceSetMessage(source, 'MESSAGE_GREET', d.greet || 'Hello |PLAYERNAME|.');
+		source = replaceSetMessage(source, 'MESSAGE_FAREWELL', d.farewell || 'Farewell.');
+		source = replaceSetMessage(source, 'MESSAGE_WALKAWAY', d.walkaway || 'How rude!');
+
+		var lines = stripRevscriptManagedBlocks(source.split('\n'));
+		var insert = buildRevscriptKeywordLines(state).concat(buildRevscriptShopBlock(state));
+		var insertAt = findRevscriptInsertIndex(lines);
+		if (insert.length) {
+			Array.prototype.splice.apply(lines, [insertAt, 0].concat(insert));
+		}
+
+		return lines.join('\n').replace(/\n{3,}/g, '\n\n');
+	};
+
+	function setXmlAttrOnTag(text, tagName, attr, value) {
+		if (value == null || value === '') return text;
+		var escaped = escapeXmlAttr(value);
+		var tagRe = new RegExp('(<' + tagName + '\\b[^>]*\\s' + attr + '\\s*=\\s*["\'])([^"\']*)(["\'])', 'i');
+		if (tagRe.test(text)) return text.replace(tagRe, '$1' + escaped + '$3');
+		var openRe = new RegExp('(<' + tagName + '\\b)([^>]*)(>)', 'i');
+		return text.replace(openRe, '$1$2 ' + attr + '="' + escaped + '"$3');
+	}
+
+	function setNpcParameter(text, key, value) {
+		var escaped = escapeXmlAttr(value);
+		var re = new RegExp('(<parameter\\s+key="' + key + '"\\s+value=")([^"]*)(")', 'i');
+		if (re.test(text)) return text.replace(re, '$1' + escaped + '$3');
+		re = new RegExp("(<parameter\\s+key='" + key + "'\\s+value=')([^']*)(')", 'i');
+		if (re.test(text)) return text.replace(re, '$1' + escaped + '$3');
+		return text.replace(/<\/parameters>/i, '\t\t<parameter key="' + key + '" value="' + escaped + '"/>\n\t</parameters>');
+	}
+
+	window.patchNpcXml = function (state, existingXml) {
+		if (!existingXml || !String(existingXml).trim()) {
+			return window.generateNpcXml(state, existingXml);
+		}
+
+		var text = normalizeNewlines(existingXml);
+		var o = state.outfit || {};
+		var d = state.dialogue || {};
+
+		text = text.replace(/(<npc\b[^>]*\sname\s*=\s*["'])([^"']*)(["'])/i, '$1' + escapeXmlAttr(state.name || '') + '$3');
+
+		if (state.walkInterval != null && !isNaN(state.walkInterval)) {
+			text = setXmlAttrOnTag(text, 'npc', 'walkinterval', String(state.walkInterval));
+		}
+		if (state.walkRadius != null && !isNaN(state.walkRadius)) {
+			text = setXmlAttrOnTag(text, 'npc', 'walkradius', String(state.walkRadius));
+		}
+
+		text = setXmlAttrOnTag(text, 'look', 'type', String(o.lookType != null ? o.lookType : 128));
+		text = setXmlAttrOnTag(text, 'look', 'head', String(o.lookHead != null ? o.lookHead : 0));
+		text = setXmlAttrOnTag(text, 'look', 'body', String(o.lookBody != null ? o.lookBody : 0));
+		text = setXmlAttrOnTag(text, 'look', 'legs', String(o.lookLegs != null ? o.lookLegs : 0));
+		text = setXmlAttrOnTag(text, 'look', 'feet', String(o.lookFeet != null ? o.lookFeet : 0));
+
+		text = setNpcParameter(text, 'message_greet', d.greet || 'Hello |PLAYERNAME|.');
+		text = setNpcParameter(text, 'message_farewell', d.farewell || 'Farewell.');
+		text = setNpcParameter(text, 'message_walkaway', d.walkaway || 'How rude!');
+
+		return text;
+	};
+})();
+
+// Classic TFS / XML NPC script (NpcHandler + ShopModule) — used only when no existing file
 window.generateClassicScript = function (state, existingSource) {
 	const safeLua = (str) => {
 		if (!str) return '';
