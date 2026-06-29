@@ -180,25 +180,50 @@ window.renderKeywords = function () {
     });
 };
 
+function stateFingerprint(state) {
+    return JSON.stringify({
+        name: state.name,
+        walkInterval: state.walkInterval,
+        walkRadius: state.walkRadius,
+        outfit: state.outfit,
+        tradeItems: state.tradeItems,
+        dialogue: state.dialogue,
+        keywords: state.keywords
+    });
+}
+
+function markNpcSaved(npc, state) {
+    npc._savedFingerprint = stateFingerprint(state);
+}
+
+function isNpcDirty(npc, state) {
+    return stateFingerprint(state) !== (npc._savedFingerprint || '');
+}
+
+function makeLoadedNpc(entry) {
+    markNpcSaved(entry, entry.state);
+    return entry;
+}
+
 function sanitizeNpcFilename(name) {
     var base = (name || 'npc').trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, '_');
     return base || 'npc';
 }
 
 function getSavePathForNpc(npc, state) {
+    if (npc && npc.saveRelativePath) return npc.saveRelativePath;
     if (npc && npc.relativePath && npc.relativePath.toLowerCase().endsWith('.lua')) {
         return npc.relativePath;
     }
-    if (npc && npc.relativePath && npc.relativePath.toLowerCase().endsWith('.xml')) {
-        return npc.relativePath.replace(/\.xml$/i, '.lua');
-    }
-    if (npc && npc.filename) {
-        if (npc.filename.toLowerCase().endsWith('.lua')) return npc.filename;
-        if (npc.filename.toLowerCase().endsWith('.xml')) {
-            return npc.filename.replace(/\.xml$/i, '.lua');
-        }
+    if (npc && npc.filename && npc.filename.toLowerCase().endsWith('.lua')) {
+        return npc.filename;
     }
     return sanitizeNpcFilename(state.name) + '.lua';
+}
+
+function notifyCannotSaveToDisk(silent) {
+    if (silent) return;
+    alert('Load an NPC folder with Load Folder to save changes directly to disk.');
 }
 
 async function writeTextFileToDir(dir, relativePath, content) {
@@ -206,21 +231,23 @@ async function writeTextFileToDir(dir, relativePath, content) {
     var fileName = parts.pop();
     var current = dir;
     for (var i = 0; i < parts.length; i++) {
-        current = await current.getDirectoryHandle(parts[i], { create: true });
+        try {
+            current = await current.getDirectoryHandle(parts[i]);
+        } catch (err) {
+            if (err.name !== 'NotFoundError') throw err;
+            current = await current.getDirectoryHandle(parts[i], { create: true });
+        }
     }
-    var fileHandle = await current.getFileHandle(fileName, { create: true });
+    var fileHandle;
+    try {
+        fileHandle = await current.getFileHandle(fileName);
+    } catch (err) {
+        if (err.name !== 'NotFoundError') throw err;
+        fileHandle = await current.getFileHandle(fileName, { create: true });
+    }
     var writable = await fileHandle.createWritable();
     await writable.write(content);
     await writable.close();
-}
-
-function downloadNpcLua(lua, state) {
-    var blob = new Blob([lua], { type: 'text/plain' });
-    var a = document.createElement('a');
-    a.download = sanitizeNpcFilename(state.name) + '.lua';
-    a.href = URL.createObjectURL(blob);
-    a.click();
-    URL.revokeObjectURL(a.href);
 }
 
 function flashSaveButton(label) {
@@ -276,33 +303,32 @@ async function persistNpcState(index, state, options) {
 
     var savePath = getSavePathForNpc(npc, state);
     npc.state = state;
-    npc.relativePath = savePath;
-    if (!npc.sourceFilename) npc.sourceFilename = npc.filename;
-    npc.filename = savePath.split('/').pop();
 
     if (typeof window.generateLUA !== 'function') {
         if (!silent) alert('Generator not loaded');
         return false;
     }
 
-    var lua = window.generateLUA(state);
     var dir = window.NPC.folderHandle;
-    if (dir && await ensureDirectoryWritePermission(dir)) {
-        try {
-            await writeTextFileToDir(dir, savePath, lua);
-            if (!silent) flashSaveButton('Saved!');
-            return true;
-        } catch (err) {
-            if (!silent) alert('Could not save file: ' + err.message);
-            return false;
-        }
+    if (!dir) {
+        notifyCannotSaveToDisk(silent);
+        return false;
+    }
+    if (!(await ensureDirectoryWritePermission(dir))) {
+        if (!silent) alert('Write permission denied. Use Load Folder and allow access to save changes.');
+        return false;
     }
 
-    if (!silent) {
-        downloadNpcLua(lua, state);
-        flashSaveButton('Downloaded');
+    try {
+        var lua = window.generateLUA(state);
+        await writeTextFileToDir(dir, savePath, lua);
+        markNpcSaved(npc, state);
+        if (!silent) flashSaveButton('Saved!');
+        return true;
+    } catch (err) {
+        if (!silent) alert('Could not save file: ' + err.message);
+        return false;
     }
-    return true;
 }
 
 var _npcLoadSerial = 0;
@@ -317,34 +343,12 @@ window.saveNPC = async function (options) {
 
     if (npc) {
         var saved = await persistNpcState(index, state, options);
-        window.renderNpcBrowser();
+        updateNpcBrowserItem(index);
         return saved;
     }
 
-    if (typeof window.generateLUA !== 'function') {
-        if (!silent) alert('Generator not loaded');
-        return false;
-    }
-
-    var lua = window.generateLUA(state);
-    var dir = window.NPC.folderHandle;
-    var savePath = getSavePathForNpc(null, state);
-    if (dir && await ensureDirectoryWritePermission(dir)) {
-        try {
-            await writeTextFileToDir(dir, savePath, lua);
-            if (!silent) flashSaveButton('Saved!');
-            return true;
-        } catch (err) {
-            if (!silent) alert('Could not save file: ' + err.message);
-            return false;
-        }
-    }
-
-    if (!silent) {
-        downloadNpcLua(lua, state);
-        flashSaveButton('Downloaded');
-    }
-    return true;
+    notifyCannotSaveToDisk(silent);
+    return false;
 };
 
 // Modal (kept for download preview via help flow if needed)
@@ -500,8 +504,20 @@ window.filterOutfits = function (category, btnEl, preferredLookType) {
     if (preferredLookType == null) updatePreview();
 };
 
-function paintOutfitThumb(imgEl, outfit) {
+function outfitThumbKey(outfit) {
     outfit = normalizeOutfit(outfit);
+    return outfit.lookType + ':' + outfit.lookHead + ':' + outfit.lookBody + ':' +
+        outfit.lookLegs + ':' + outfit.lookFeet;
+}
+
+function paintOutfitThumb(imgEl, outfit, npc) {
+    outfit = normalizeOutfit(outfit);
+    var key = outfitThumbKey(outfit);
+    if (npc && npc._thumbUrl && npc._thumbKey === key) {
+        imgEl.src = npc._thumbUrl;
+        imgEl.dataset.thumbPainted = '1';
+        return;
+    }
     function apply() {
         if (!window.TibiaSprites || !window.TibiaSprites.ready) return false;
         var url = window.TibiaSprites.getOutfitDataURL(outfit.lookType, {
@@ -511,14 +527,94 @@ function paintOutfitThumb(imgEl, outfit) {
             feet: outfit.lookFeet,
             direction: 2
         });
-        if (url) imgEl.src = url;
-        else imgEl.removeAttribute('src');
+        if (url) {
+            imgEl.src = url;
+            if (npc) {
+                npc._thumbUrl = url;
+                npc._thumbKey = key;
+            }
+        } else {
+            imgEl.removeAttribute('src');
+        }
+        imgEl.dataset.thumbPainted = '1';
         return true;
     }
     if (apply()) return;
     if (window.TibiaSprites && window.TibiaSprites.whenReady) {
         window.TibiaSprites.whenReady(apply);
     }
+}
+
+var _thumbObserver = null;
+
+function observeNpcThumb(img, index) {
+    img.dataset.npcIndex = String(index);
+    var npc = window.NPC.loadedNpcs[index];
+    if (npc && npc._thumbUrl) {
+        img.src = npc._thumbUrl;
+        img.dataset.thumbPainted = '1';
+        return;
+    }
+    if (!('IntersectionObserver' in window)) {
+        if (npc) paintOutfitThumb(img, npc.state.outfit, npc);
+        return;
+    }
+    if (!_thumbObserver) {
+        var root = gid('npc-browser-list');
+        _thumbObserver = new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+                if (!entry.isIntersecting) return;
+                var el = entry.target;
+                var idx = parseInt(el.dataset.npcIndex, 10);
+                var entryNpc = window.NPC.loadedNpcs[idx];
+                if (entryNpc && el.dataset.thumbPainted !== '1') {
+                    paintOutfitThumb(el, entryNpc.state.outfit, entryNpc);
+                }
+                _thumbObserver.unobserve(el);
+            });
+        }, { root: root, rootMargin: '120px' });
+    }
+    _thumbObserver.observe(img);
+}
+
+function refreshNpcBrowserThumb(index) {
+    var list = gid('npc-browser-list');
+    if (!list) return;
+    var btn = list.querySelector('.npc-browser-item[data-index="' + index + '"]');
+    if (!btn) return;
+    var npc = window.NPC.loadedNpcs[index];
+    if (!npc) return;
+    var img = btn.querySelector('.npc-browser-thumb img');
+    if (!img) return;
+    var key = outfitThumbKey(npc.state.outfit);
+    if (npc._thumbUrl && npc._thumbKey === key) {
+        img.src = npc._thumbUrl;
+        img.dataset.thumbPainted = '1';
+        return;
+    }
+    img.dataset.thumbPainted = '';
+    paintOutfitThumb(img, npc.state.outfit, npc);
+}
+
+function updateNpcBrowserSelection() {
+    var list = gid('npc-browser-list');
+    if (!list) return;
+    var active = window.NPC.activeLoadedIndex;
+    list.querySelectorAll('.npc-browser-item').forEach(function (btn) {
+        var idx = parseInt(btn.dataset.index, 10);
+        btn.classList.toggle('active', idx === active);
+    });
+}
+
+function updateNpcBrowserItem(index) {
+    var list = gid('npc-browser-list');
+    if (!list) return;
+    var btn = list.querySelector('.npc-browser-item[data-index="' + index + '"]');
+    var npc = window.NPC.loadedNpcs[index];
+    if (!btn || !npc) return;
+    var nameEl = btn.querySelector('.npc-browser-name');
+    if (nameEl) nameEl.textContent = getNpcDisplayName(npc);
+    refreshNpcBrowserThumb(index);
 }
 
 function repaintAllNpcThumbs() {
@@ -529,7 +625,8 @@ function repaintAllNpcThumbs() {
         var npc = window.NPC.loadedNpcs[idx];
         if (!npc) return;
         var img = btn.querySelector('.npc-browser-thumb img');
-        if (img) paintOutfitThumb(img, npc.state.outfit);
+        if (!img || img.dataset.thumbPainted === '1') return;
+        observeNpcThumb(img, idx);
     });
 }
 
@@ -598,7 +695,7 @@ window.renderNpcBrowser = function () {
         thumb.className = 'npc-browser-thumb';
         var img = document.createElement('img');
         img.alt = '';
-        paintOutfitThumb(img, npc.state.outfit);
+        observeNpcThumb(img, index);
         thumb.appendChild(img);
 
         var nameEl = document.createElement('div');
@@ -609,8 +706,6 @@ window.renderNpcBrowser = function () {
         btn.appendChild(nameEl);
         list.appendChild(btn);
     });
-
-    repaintAllNpcThumbs();
 };
 
 window.loadNPCIntoEditor = async function (index) {
@@ -621,7 +716,10 @@ window.loadNPCIntoEditor = async function (index) {
         var prevNpc = window.NPC.loadedNpcs[prevIndex];
         var snapshot = collectEditorState(prevNpc);
         prevNpc.state = snapshot;
-        await persistNpcState(prevIndex, snapshot, { silent: true });
+        if (isNpcDirty(prevNpc, snapshot)) {
+            persistNpcState(prevIndex, snapshot, { silent: true });
+        }
+        refreshNpcBrowserThumb(prevIndex);
         if (serial !== _npcLoadSerial) return;
     }
 
@@ -630,7 +728,7 @@ window.loadNPCIntoEditor = async function (index) {
 
     window.NPC.activeLoadedIndex = index;
     syncEditorFromState(npc.state);
-    window.renderNpcBrowser();
+    updateNpcBrowserSelection();
 };
 
 function fileRelativePath(file) {
@@ -652,6 +750,7 @@ window.processNpcFiles = async function (files, folderName) {
     var xmlFiles = [];
     var luaFiles = [];
     var scriptMap = {};
+    var scriptPathMap = {};
 
     allFiles.forEach(function (file) {
         var path = fileRelativePath(file);
@@ -661,7 +760,9 @@ window.processNpcFiles = async function (files, folderName) {
             xmlFiles.push({ file: file, path: path });
         } else if (lower.endsWith('.lua')) {
             luaFiles.push({ file: file, path: path });
-            scriptMap[scriptKeyFromPath(path)] = file;
+            var scriptKey = scriptKeyFromPath(path);
+            scriptMap[scriptKey] = file;
+            scriptPathMap[scriptKey] = path;
         }
     });
 
@@ -669,42 +770,53 @@ window.processNpcFiles = async function (files, folderName) {
     window.NPC.activeLoadedIndex = null;
     window.NPC.loadedFolderName = folderName || '';
 
+    var list = gid('npc-browser-list');
+    if (list) list.innerHTML = '<div class="npc-browser-empty">Loading NPCs…</div>';
+
     var xmlScriptNames = {};
 
-    for (var i = 0; i < xmlFiles.length; i++) {
-        try {
-            var xmlEntry = xmlFiles[i];
-            var xmlText = await xmlEntry.file.text();
-            var state = window.parseNpcXml(xmlText);
-
-            var doc = new DOMParser().parseFromString(xmlText, 'text/xml');
-            var npcEl = doc.querySelector('npc');
-            var scriptAttr = npcEl ? (npcEl.getAttribute('script') || '') : '';
-            if (scriptAttr) {
-                xmlScriptNames[scriptAttr.toLowerCase()] = true;
-                var scriptFile = scriptMap[scriptAttr.toLowerCase()];
-                if (scriptFile) {
-                    var scriptText = await scriptFile.text();
-                    var kw = window.parseNpcScriptKeywords(scriptText);
-                    if (kw.length) state.keywords = kw;
+    var xmlNpcPromises = xmlFiles.map(function (xmlEntry) {
+        return (async function () {
+            try {
+                var xmlText = await xmlEntry.file.text();
+                var state = window.parseNpcXml(xmlText);
+                var scriptMatch = xmlText.match(/<npc\b[^>]*\sscript\s*=\s*["']([^"']+)["']/i);
+                var scriptAttr = scriptMatch ? scriptMatch[1] : '';
+                var saveRelativePath = xmlEntry.path.replace(/\.xml$/i, '.lua');
+                if (scriptAttr) {
+                    xmlScriptNames[scriptAttr.toLowerCase()] = true;
+                    var scriptFile = scriptMap[scriptAttr.toLowerCase()];
+                    var scriptPath = scriptPathMap[scriptAttr.toLowerCase()];
+                    if (scriptPath) saveRelativePath = scriptPath;
+                    if (scriptFile) {
+                        var scriptText = await scriptFile.text();
+                        var kw = window.parseNpcScriptKeywords(scriptText);
+                        if (kw.length) state.keywords = kw;
+                    }
                 }
-            }
 
-            if (!state.name) {
-                state.name = xmlEntry.file.name.replace(/\.xml$/i, '');
+                if (!state.name) {
+                    state.name = xmlEntry.file.name.replace(/\.xml$/i, '');
+                }
+                state.outfit = normalizeOutfit(state.outfit);
+                return makeLoadedNpc({
+                    filename: xmlEntry.file.name,
+                    sourceFilename: xmlEntry.file.name,
+                    relativePath: xmlEntry.path,
+                    saveRelativePath: saveRelativePath,
+                    state: state
+                });
+            } catch (err) {
+                console.warn('Failed to parse ' + xmlEntry.file.name, err);
+                return null;
             }
-            state.outfit = normalizeOutfit(state.outfit);
-            window.NPC.loadedNpcs.push({
-                filename: xmlEntry.file.name,
-                sourceFilename: xmlEntry.file.name,
-                relativePath: xmlEntry.path,
-                state: state
-            });
-        } catch (err) {
-            console.warn('Failed to parse ' + xmlFiles[i].file.name, err);
-        }
-    }
+        })();
+    });
 
+    var xmlNpcs = await Promise.all(xmlNpcPromises);
+    window.NPC.loadedNpcs = xmlNpcs.filter(Boolean);
+
+    var revscriptPromises = [];
     for (var j = 0; j < luaFiles.length; j++) {
         var luaEntry = luaFiles[j];
         var luaName = luaEntry.file.name.toLowerCase();
@@ -714,25 +826,32 @@ window.processNpcFiles = async function (files, folderName) {
             continue;
         }
 
-        try {
-            var luaText = await luaEntry.file.text();
-            if (!window.isRevscriptNpcLua(luaText)) continue;
+        revscriptPromises.push((async function (entry) {
+            try {
+                var luaText = await entry.file.text();
+                if (!window.isRevscriptNpcLua(luaText)) return null;
 
-            var luaState = window.parseNpcLua(luaText);
-            if (!luaState.name) {
-                luaState.name = luaEntry.file.name.replace(/\.lua$/i, '');
+                var luaState = window.parseNpcLua(luaText);
+                if (!luaState.name) {
+                    luaState.name = entry.file.name.replace(/\.lua$/i, '');
+                }
+                luaState.outfit = normalizeOutfit(luaState.outfit);
+                return makeLoadedNpc({
+                    filename: entry.file.name,
+                    sourceFilename: entry.file.name,
+                    relativePath: entry.path,
+                    saveRelativePath: entry.path,
+                    state: luaState
+                });
+            } catch (err2) {
+                console.warn('Failed to parse ' + entry.file.name, err2);
+                return null;
             }
-            luaState.outfit = normalizeOutfit(luaState.outfit);
-            window.NPC.loadedNpcs.push({
-                filename: luaEntry.file.name,
-                sourceFilename: luaEntry.file.name,
-                relativePath: luaEntry.path,
-                state: luaState
-            });
-        } catch (err2) {
-            console.warn('Failed to parse ' + luaEntry.file.name, err2);
-        }
+        })(luaEntry));
     }
+
+    var revscriptNpcs = await Promise.all(revscriptPromises);
+    window.NPC.loadedNpcs = window.NPC.loadedNpcs.concat(revscriptNpcs.filter(Boolean));
 
     window.NPC.loadedNpcs.sort(function (a, b) {
         return (a.state.name || a.filename).localeCompare(b.state.name || b.filename, undefined, { sensitivity: 'base' });
@@ -816,7 +935,7 @@ async function collectNpcFilesFromDir(dir, files, basePath) {
                 files.push(file);
             }
         } else if (entry.kind === 'directory' && entry.name.toLowerCase() !== 'lib') {
-            await collectNpcFilesFromDir(await entry.getDirectoryHandle(), files, rel + '/');
+            await collectNpcFilesFromDir(entry, files, rel + '/');
         }
     }
 }
@@ -866,7 +985,9 @@ window.pickNpcFolder = async function () {
     }
 
     var input = gid('npc-folder-input');
-    if (input) input.click();
+    if (input) {
+        alert('Direct save requires Chrome or Edge. Use Load Folder (not the legacy file picker).');
+    }
 };
 
 // Catalog
@@ -1125,6 +1246,23 @@ window.randomizeColors = function(mode) {
 };
 
 
+function getPreviewNpcName() {
+    var name = String((window.NPC.state && window.NPC.state.name) || '').trim();
+    if (name) return name;
+    var idx = window.NPC.activeLoadedIndex;
+    if (idx != null) {
+        var npc = window.NPC.loadedNpcs[idx];
+        if (npc) return getNpcDisplayName(npc);
+    }
+    return 'Unnamed';
+}
+
+function updatePreviewNpcName() {
+    var nameEl = gid('preview-npc-name');
+    if (!nameEl) return;
+    nameEl.textContent = getPreviewNpcName();
+}
+
 // Preview — rendered locally from the .spr (see sprites.js).
 function updatePreview() {
     var outfitSelect = gid('outfit-select');
@@ -1146,6 +1284,8 @@ function updatePreview() {
             previewImg.removeAttribute('src');
         }
     }
+
+    updatePreviewNpcName();
 }
 
 // Initialization
@@ -1226,7 +1366,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // Basic config fields
-    gid('npc-name').addEventListener('input',          function (e) { window.NPC.state.name                  = e.target.value; });
+    gid('npc-name').addEventListener('input',          function (e) { window.NPC.state.name = e.target.value; updatePreviewNpcName(); });
     gid('npc-walk-interval').addEventListener('input', function (e) { window.NPC.state.walkInterval           = parseInt(e.target.value); });
     gid('npc-walk-radius').addEventListener('input',   function (e) { window.NPC.state.walkRadius             = parseInt(e.target.value); });
     gid('msg-greet').addEventListener('input',         function (e) { window.NPC.state.dialogue.greet         = e.target.value; });
@@ -1242,16 +1382,8 @@ document.addEventListener('DOMContentLoaded', function () {
     var folderInput = gid('npc-folder-input');
     if (folderInput) {
         folderInput.addEventListener('change', function () {
-            if (!folderInput.files || !folderInput.files.length) return;
-            window.NPC.folderHandle = null;
-            var folderName = '';
-            var first = folderInput.files[0];
-            if (first.webkitRelativePath) {
-                folderName = first.webkitRelativePath.split('/')[0] || first.webkitRelativePath.split('\\')[0] || '';
-            }
-            window.processNpcFiles(folderInput.files, folderName).then(function () {
-                folderInput.value = '';
-            });
+            folderInput.value = '';
+            alert('Direct save requires Chrome or Edge. Use Load Folder to select your NPC directory.');
         });
     }
 
