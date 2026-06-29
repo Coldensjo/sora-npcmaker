@@ -105,10 +105,18 @@ body {
 .rpg-layout {
   display: flex;
   width: 100%;
-  max-width: 1300px;
+  max-width: 1500px;
   gap: 20px;
   margin-top: 25px;
   margin-bottom: 25px;
+}
+
+.rpg-center {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+  align-items: flex-start;
 }
 
 .rpg-sidebar {
@@ -202,6 +210,34 @@ body {
   box-shadow: 0 0 5px rgba(9, 66, 147, 0.4), inset 1px 1px 3px rgba(0,0,0,0.5);
 }
 
+textarea.rpg-input.dialogue-input {
+  resize: vertical;
+  min-height: 4.5em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+}
+
+textarea.rpg-input.kw-response-input {
+  resize: none;
+  overflow: hidden;
+  min-height: 2.75em;
+  max-height: 20em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  field-sizing: content;
+  height: auto;
+}
+
+#keywords-tbody td:nth-child(2) {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+}
+
 .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -245,16 +281,6 @@ body {
 
 .rpg-checkbox input[type="checkbox"]:checked::before {
   transform: scale(1);
-}
-
-.addons-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  background: rgba(0,0,0,0.2);
-  padding: 10px;
-  border: 1px solid #111;
-  border-radius: 3px;
 }
 
 /* Buttons */
@@ -383,8 +409,9 @@ body {
 
 /* Character Preview */
 .character-preview {
-  background: url('tibia_grass.png') repeat;
-  background-size: 128px 128px;
+  background-image: url('tibia_grass.png');
+  background-repeat: repeat;
+  background-size: 32px 32px;
   border: 2px solid #2a4a1a;
   box-shadow: inset 0 0 20px rgba(0,0,0,0.7), 0 0 8px rgba(0,0,0,0.5);
   height: 200px;
@@ -398,15 +425,10 @@ body {
   image-rendering: pixelated;
 }
 
-.character-preview::after {
-  content: ''; position: absolute; bottom: 40px; width: 60px; height: 15px;
-  background: rgba(0,0,0,0.6); border-radius: 50%; filter: blur(3px); z-index: 1;
-}
-
-#preview-outfit {
+#preview-outfit,
+.npc-browser-thumb img {
   transform: scale(2);
   image-rendering: pixelated;
-  z-index: 2;
   position: relative;
 }
 
@@ -636,4 +658,128 @@ body {
 
 .item-row img {
   width: 32px; height: 32px; object-fit: contain; image-rendering: pixelated; vertical-align: middle; margin-right: 10px;
+}
+
+/* NPC folder browser */
+.npc-browser-panel {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  max-height: calc(100vh - 110px);
+  overflow: hidden;
+  position: relative;
+  z-index: 2;
+}
+
+.npc-browser-header {
+  padding: 16px 16px 10px;
+  border-bottom: 1px solid var(--border-dark);
+  flex-shrink: 0;
+}
+
+.npc-browser-panel::before {
+  pointer-events: none;
+}
+
+.npc-browser-header .panel-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.npc-browser-folder {
+  font-size: 11px;
+  color: #888;
+  word-break: break-all;
+  margin-bottom: 4px;
+  min-height: 14px;
+}
+
+.npc-browser-count {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.npc-browser-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  min-height: 200px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  align-content: start;
+}
+
+.npc-browser-empty {
+  grid-column: 1 / -1;
+  color: #666;
+  font-size: 12px;
+  text-align: center;
+  padding: 24px 12px;
+  line-height: 1.5;
+}
+
+.npc-browser-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 6px 4px;
+  margin-bottom: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.25);
+  transition: background 0.15s, border-color 0.15s;
+  font: inherit;
+  color: inherit;
+  text-align: center;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.npc-browser-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--border-light);
+}
+
+.npc-browser-item.active {
+  background: rgba(180, 140, 58, 0.15);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(180, 140, 58, 0.3);
+}
+
+.npc-browser-thumb {
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  background-image: url('tibia_grass.png');
+  background-repeat: repeat;
+  background-size: 32px 32px;
+  border: 2px solid #2a4a1a;
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.7);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  image-rendering: pixelated;
+}
+
+.npc-browser-thumb img {
+  flex-shrink: 0;
+}
+
+.npc-browser-name {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-main);
+  line-height: 1.25;
+  word-break: break-word;
+  min-width: 0;
+  width: 100%;
 }

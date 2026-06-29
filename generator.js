@@ -19,8 +19,8 @@ window.generateLUA = function(state) {
 	lua += `npcConfig.name = internalNpcName\n`;
 	lua += `npcConfig.description = internalNpcName\n\n`;
 
-	lua += `npcConfig.health = ${parseInt(state.health) || 100}\n`;
-	lua += `npcConfig.maxHealth = npcConfig.health\n`;
+	lua += `npcConfig.health = 100\n`;
+	lua += `npcConfig.maxHealth = 100\n`;
 	lua += `npcConfig.walkInterval = ${parseInt(state.walkInterval) || 2000}\n`;
 	lua += `npcConfig.walkRadius = ${parseInt(state.walkRadius) || 2}\n\n`;
 
@@ -31,10 +31,6 @@ window.generateLUA = function(state) {
 	lua += `\tlookBody = ${state.outfit.lookBody || 0},\n`;
 	lua += `\tlookLegs = ${state.outfit.lookLegs || 0},\n`;
 	lua += `\tlookFeet = ${state.outfit.lookFeet || 0},\n`;
-	lua += `\tlookAddons = ${state.outfit.lookAddons || 0},\n`;
-	if(state.outfit.mount > 0) {
-		lua += `\tlookMount = ${state.outfit.mount},\n`;
-	}
 	lua += `}\n\n`;
 
 	// Flags

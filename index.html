@@ -4,17 +4,17 @@
     <meta charset="UTF-8">
     <title>Sorairei NPC Maker</title>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
-    <script src="data.js"></script>
-    <script src="outfit_data.js"></script>
+    <link rel="stylesheet" href="styles.css?v=1.4.3">
 </head>
 <body>
     <header class="rpg-header">
         <h1 style="font-family: 'Cinzel Decorative', cursive; color: var(--accent); text-shadow: 0 2px 8px rgba(180,140,58,0.5); font-size: 24px; letter-spacing: 2px;">Sorairei <span style="color: #dfd3be; font-size: 16px; letter-spacing: 1px; font-weight: 400;">NPC Maker</span></h1>
         <div class="header-actions">
             <button id="btn-info" class="info-circle-btn" onclick="window.showHelpModal()" title="About / Help">i</button>
+            <button id="btn-load-folder" class="rpg-btn" onclick="window.pickNpcFolder()">Load Folder</button>
             <button id="btn-new" class="rpg-btn" onclick="window.resetNPC()">New NPC</button>
-            <button id="btn-generate" class="rpg-btn highlight" onclick="window.showLuaModal()">Generate .LUA</button>
+            <button id="btn-save" class="rpg-btn highlight" onclick="window.saveNPC()">Save</button>
+            <input type="file" id="npc-folder-input" webkitdirectory multiple accept=".lua,.xml" hidden>
         </div>
     </header>
 
@@ -25,12 +25,13 @@
             <div class="rpg-panel preview-panel">
                 <h2 class="panel-title">Character Preview</h2>
                 <div class="character-preview">
-                    <img id="preview-outfit" src="https://outfit-images-oracle.ots.me/latest_walk/animoutfit.php?id=128&addons=0&head=0&body=0&legs=0&feet=0&mount=0&direction=3" alt="Outfit Preview">
+                    <img id="preview-outfit" alt="Outfit Preview">
                 </div>
             </div>
         </aside>
 
-        <!-- Main -->
+        <!-- Main + NPC browser -->
+        <div class="rpg-center">
         <main class="rpg-main">
             <!-- Tabs -->
             <nav class="rpg-tabs">
@@ -53,10 +54,6 @@
                         <input type="number" id="npc-walk-interval" class="rpg-input" placeholder="2000">
                     </div>
                     <div class="form-group">
-                        <label>Max Health</label>
-                        <input type="number" id="npc-health" class="rpg-input" placeholder="100">
-                    </div>
-                    <div class="form-group">
                         <label>Walk Radius</label>
                         <input type="number" id="npc-walk-radius" class="rpg-input" placeholder="2">
                     </div>
@@ -70,23 +67,10 @@
                         <div>
                             <div class="form-group">
                                 <label>Outfit Type</label>
-                                <div id="outfit-type-filter" style="display:flex; gap:5px; margin-bottom:8px;">
-                                    <button type="button" class="rpg-btn outfit-filter-btn active" data-filter="male" onclick="window.filterOutfits('male',this)">Male</button>
-                                    <button type="button" class="rpg-btn outfit-filter-btn" data-filter="female" onclick="window.filterOutfits('female',this)">Female</button>
-                                    <button type="button" class="rpg-btn outfit-filter-btn" data-filter="monster" onclick="window.filterOutfits('monster',this)">Monster</button>
+                                <div id="outfit-type-filter" style="display:flex; gap:5px; margin-bottom:8px; flex-wrap:wrap;">
+                                    <!-- Outfit category buttons injected from outfits.xml -->
                                 </div>
                                 <select id="outfit-select" class="rpg-input"></select>
-                            </div>
-
-                            <div class="addons-grid">
-                                <label class="rpg-checkbox"><input type="checkbox" id="addon1"> Addon 1</label>
-                                <label class="rpg-checkbox"><input type="checkbox" id="addon2"> Addon 2</label>
-                                <label class="rpg-checkbox"><input type="checkbox" id="mount-check"> Mount</label>
-                            </div>
-
-                            <div class="form-group" id="mount-selector-group" style="margin-top:10px; display:none;">
-                                <label>Mount Type</label>
-                                <select id="mount-select" class="rpg-input" onchange="window.updatePreview()"></select>
                             </div>
                         </div>
 
@@ -183,15 +167,15 @@
                 <div class="form-row">
                     <div class="form-group" style="grid-column: 1 / -1;">
                         <label>Greet Message</label>
-                        <input type="text" id="msg-greet" class="rpg-input" value="Hello |PLAYERNAME|.">
+                        <textarea id="msg-greet" class="rpg-input dialogue-input" rows="3">Hello |PLAYERNAME|.</textarea>
                     </div>
                     <div class="form-group">
                         <label>Farewell Message</label>
-                        <input type="text" id="msg-farewell" class="rpg-input" value="Farewell.">
+                        <textarea id="msg-farewell" class="rpg-input dialogue-input" rows="3">Farewell.</textarea>
                     </div>
                     <div class="form-group">
                         <label>Walkaway Message</label>
-                        <input type="text" id="msg-walkaway" class="rpg-input" value="How rude!">
+                        <textarea id="msg-walkaway" class="rpg-input dialogue-input" rows="3">How rude!</textarea>
                     </div>
                 </div>
             </div>
@@ -199,25 +183,25 @@
             <!-- Keywords -->
             <div id="tab-keywords" class="tab-content rpg-panel">
                 <h2 class="panel-title">Custom Keywords</h2>
-                <div style="display:flex; justify-content:space-between; gap:20px; align-items:flex-end;">
+                <div style="display:flex; justify-content:space-between; gap:20px; align-items:flex-start;">
                      <div class="form-group" style="flex:1; margin-bottom:0;">
                          <label>Keyword (e.g. 'help')</label>
                          <input type="text" id="kw-trigger" class="rpg-input" placeholder="Type trigger word">
                      </div>
                      <div class="form-group" style="flex:2; margin-bottom:0;">
                          <label>Response</label>
-                         <input type="text" id="kw-response" class="rpg-input" placeholder="Type NPC response">
+                         <textarea id="kw-response" class="rpg-input kw-response-input" rows="2" placeholder="Type NPC response"></textarea>
                      </div>
-                     <button id="btn-add-kw" class="rpg-btn highlight" style="margin-bottom:2px;" onclick="window.addKeyword()">Add</button>
+                     <button id="btn-add-kw" class="rpg-btn highlight" style="margin-top:26px;" onclick="window.addKeyword()">Add</button>
                 </div>
 
-                <div style="margin-top: 20px; max-height:350px; overflow-y:auto; border: 1px solid #000;">
+                <div style="margin-top: 20px; border: 1px solid #000;">
                     <table class="rpg-table">
                         <thead>
                             <tr>
                                 <th>Keyword</th>
                                 <th>Response</th>
-                                <th style="width: 80px; text-align:center;">Action</th>
+                                <th style="width: 130px; text-align:center;">Action</th>
                             </tr>
                         </thead>
                         <tbody id="keywords-tbody">
@@ -226,6 +210,18 @@
                 </div>
             </div>
         </main>
+
+        <aside class="npc-browser-panel rpg-panel">
+            <div class="npc-browser-header">
+                <h2 class="panel-title">Loaded NPCs</h2>
+                <div id="npc-browser-folder" class="npc-browser-folder"></div>
+                <div id="npc-browser-count" class="npc-browser-count"></div>
+            </div>
+            <div id="npc-browser-list" class="npc-browser-list">
+                <div class="npc-browser-empty">Load a folder of NPC .xml or .lua files.</div>
+            </div>
+        </aside>
+        </div>
     </div>
     </div> <!-- End rpg-layout-container -->
 
@@ -300,7 +296,7 @@
                 </div>
 
                 <div style="padding-top: 20px; border-top: 1px solid #333; font-size: 12px; opacity: 0.7;">
-                    <p>Using outfit generator from <a href="https://outfit-images.ots.me/" target="_blank" style="color: var(--accent); text-decoration: none;">outfit-images.ots.me</a>. Credits to the original authors.</p>
+                    <p>Outfits and items are rendered locally from the client <b>Tibia.spr</b> / <b>Tibia.dat</b>. Sprite-loading logic adapted from Remere's Map Editor.</p>
                 </div>
             </div>
             
@@ -310,7 +306,11 @@
         </div>
     </div>
 
-    <script src="generator.js"></script>
-    <script src="app.js"></script>
+    <script src="sprites.js?v=1.4.2"></script>
+    <script src="gamedata.js?v=1.4.2"></script>
+    <script src="assets.js?v=1.4.2"></script>
+    <script src="generator.js?v=1.4.2"></script>
+    <script src="parser.js?v=1.4.2"></script>
+    <script src="app.js?v=1.4.4"></script>
 </body>
 </html>

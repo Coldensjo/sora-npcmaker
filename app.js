@@ -5,15 +5,19 @@ window.NPC = {
     state: {
         name: '',
         walkInterval: null,
-        health: null,
         walkRadius: null,
-        outfit: { lookType: 128, lookHead: 0, lookBody: 0, lookLegs: 0, lookFeet: 0, lookAddons: 0, mount: 0 },
+        outfit: { lookType: 128, lookHead: 0, lookBody: 0, lookLegs: 0, lookFeet: 0 },
         tradeItems: [],
         dialogue: { greet: 'Hello |PLAYERNAME|.', farewell: 'Farewell.', walkaway: 'How rude!' },
         keywords: []
     },
     selectedItem: null,
-    activeColorPart: 'head'
+    activeColorPart: 'head',
+    loadedNpcs: [],
+    activeLoadedIndex: null,
+    loadedFolderName: '',
+    folderHandle: null,
+    editingKeywordIndex: null
 };
 
 function gid(id) { return document.getElementById(id); }
@@ -36,13 +40,14 @@ window.sanitize = function(str) {
 window.addTradeItem = function () {
     var rawVal = (gid('shop-item-search').value || '').trim().toLowerCase();
 
+    var items = (window.APP_DATA && window.APP_DATA.items) || {};
     if (!window.NPC.selectedItem && rawVal) {
-        var ids = Object.keys(APP_DATA.items);
+        var ids = Object.keys(items);
         for (var i = 0; i < ids.length; i++) {
             var id = ids[i];
-            var n = (APP_DATA.items[id].name || '').toLowerCase();
+            var n = (items[id].name || '').toLowerCase();
             if (id === rawVal || n === rawVal || n.includes(rawVal)) {
-                window.NPC.selectedItem = { id: id, name: APP_DATA.items[id].name };
+                window.NPC.selectedItem = { id: id, name: items[id].name };
                 break;
             }
         }
@@ -87,28 +92,74 @@ window.renderTradeItems = function () {
     window.NPC.state.tradeItems.forEach(function (item, index) {
         var tr = document.createElement('tr');
         tr.innerHTML =
-            '<td><img src="items/' + window.sanitize(item.id) + '.gif" style="width:24px;image-rendering:pixelated;" onerror="this.style.display=\'none\'"></td>' +
+            '<td><img data-sprite-id="' + window.sanitize(item.id) + '" style="width:24px;image-rendering:pixelated;"></td>' +
             '<td>' + window.sanitize(item.name) + '<div style="font-size:10px;color:#777">ID: ' + window.sanitize(item.id) + '</div></td>' +
             '<td style="color:#2ecc71">' + window.sanitize(item.buy) + ' gp</td>' +
             '<td style="color:#e74c3c">' + window.sanitize(item.sell) + ' gp</td>' +
             '<td style="text-align:center"><button class="rpg-btn danger" style="padding:4px 10px;font-size:11px;" onclick="window.removeItem(' + index + ')">X</button></td>';
         tbody.appendChild(tr);
     });
+    if (window.TibiaSprites) window.TibiaSprites.decorate(tbody);
 };
 
 // Keywords
+function autoResizeKwResponse() {
+    var el = gid('kw-response');
+    if (!el) return;
+    el.style.height = 'auto';
+    var max = parseFloat(getComputedStyle(el).maxHeight);
+    var next = el.scrollHeight;
+    if (!isNaN(max) && max > 0 && next > max) {
+        el.style.height = max + 'px';
+        el.style.overflowY = 'auto';
+    } else {
+        el.style.height = next + 'px';
+        el.style.overflowY = 'hidden';
+    }
+}
+
+function resetKeywordForm() {
+    window.NPC.editingKeywordIndex = null;
+    gid('kw-trigger').value  = '';
+    gid('kw-response').value = '';
+    var btn = gid('btn-add-kw');
+    if (btn) btn.textContent = 'Add';
+    autoResizeKwResponse();
+}
+
 window.addKeyword = function () {
     var trigger = (gid('kw-trigger').value || '').trim();
     var resp    = (gid('kw-response').value || '').trim();
     if (!trigger || !resp) { alert('Please enter a keyword and a response.'); return; }
-    window.NPC.state.keywords.push({ trigger: trigger, response: resp });
+    var idx = window.NPC.editingKeywordIndex;
+    if (idx != null) {
+        window.NPC.state.keywords[idx] = { trigger: trigger, response: resp };
+    } else {
+        window.NPC.state.keywords.push({ trigger: trigger, response: resp });
+    }
     window.renderKeywords();
-    gid('kw-trigger').value  = '';
-    gid('kw-response').value = '';
+    resetKeywordForm();
+};
+
+window.editKeyword = function (index) {
+    var kw = window.NPC.state.keywords[index];
+    if (!kw) return;
+    window.NPC.editingKeywordIndex = index;
+    gid('kw-trigger').value  = kw.trigger;
+    gid('kw-response').value   = kw.response;
+    var btn = gid('btn-add-kw');
+    if (btn) btn.textContent = 'Save';
+    autoResizeKwResponse();
+    gid('kw-trigger').focus();
 };
 
 window.removeKeyword = function (index) {
     window.NPC.state.keywords.splice(index, 1);
+    if (window.NPC.editingKeywordIndex === index) {
+        resetKeywordForm();
+    } else if (window.NPC.editingKeywordIndex != null && window.NPC.editingKeywordIndex > index) {
+        window.NPC.editingKeywordIndex -= 1;
+    }
     window.renderKeywords();
 };
 
@@ -121,12 +172,182 @@ window.renderKeywords = function () {
         tr.innerHTML =
             '<td style="color:var(--accent);font-weight:bold">' + window.sanitize(kw.trigger) + '</td>' +
             '<td>' + window.sanitize(kw.response) + '</td>' +
-            '<td style="text-align:center"><button class="rpg-btn danger" style="padding:4px 10px;font-size:11px;" onclick="window.removeKeyword(' + index + ')">X</button></td>';
+            '<td style="text-align:center">' +
+                '<button class="rpg-btn" style="padding:4px 10px;font-size:11px;margin-right:4px;" onclick="window.editKeyword(' + index + ')">Edit</button>' +
+                '<button class="rpg-btn danger" style="padding:4px 10px;font-size:11px;" onclick="window.removeKeyword(' + index + ')">X</button>' +
+            '</td>';
         tbody.appendChild(tr);
     });
 };
 
-// Modal
+function sanitizeNpcFilename(name) {
+    var base = (name || 'npc').trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, '_');
+    return base || 'npc';
+}
+
+function getSavePathForNpc(npc, state) {
+    if (npc && npc.relativePath && npc.relativePath.toLowerCase().endsWith('.lua')) {
+        return npc.relativePath;
+    }
+    if (npc && npc.relativePath && npc.relativePath.toLowerCase().endsWith('.xml')) {
+        return npc.relativePath.replace(/\.xml$/i, '.lua');
+    }
+    if (npc && npc.filename) {
+        if (npc.filename.toLowerCase().endsWith('.lua')) return npc.filename;
+        if (npc.filename.toLowerCase().endsWith('.xml')) {
+            return npc.filename.replace(/\.xml$/i, '.lua');
+        }
+    }
+    return sanitizeNpcFilename(state.name) + '.lua';
+}
+
+async function writeTextFileToDir(dir, relativePath, content) {
+    var parts = relativePath.replace(/\\/g, '/').split('/').filter(Boolean);
+    var fileName = parts.pop();
+    var current = dir;
+    for (var i = 0; i < parts.length; i++) {
+        current = await current.getDirectoryHandle(parts[i], { create: true });
+    }
+    var fileHandle = await current.getFileHandle(fileName, { create: true });
+    var writable = await fileHandle.createWritable();
+    await writable.write(content);
+    await writable.close();
+}
+
+function downloadNpcLua(lua, state) {
+    var blob = new Blob([lua], { type: 'text/plain' });
+    var a = document.createElement('a');
+    a.download = sanitizeNpcFilename(state.name) + '.lua';
+    a.href = URL.createObjectURL(blob);
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function flashSaveButton(label) {
+    var btn = gid('btn-save');
+    if (!btn) return;
+    var original = btn.textContent;
+    btn.textContent = label;
+    setTimeout(function () { btn.textContent = original; }, 1200);
+}
+
+function filenameToNpcName(filename) {
+    if (!filename) return '';
+    return filename.replace(/^.*\//, '').replace(/\.(xml|lua)$/i, '');
+}
+
+function getNpcDisplayName(npc) {
+    if (!npc) return 'Unnamed';
+    var name = (npc.state && npc.state.name) ? String(npc.state.name).trim() : '';
+    if (name) return name;
+    return filenameToNpcName(npc.sourceFilename || npc.filename || npc.relativePath) || 'Unnamed';
+}
+
+function collectEditorState(existingNpc) {
+    var state = cloneNpcState(window.NPC.state);
+    var nameEl = gid('npc-name');
+    if (nameEl) state.name = nameEl.value;
+    var walkEl = gid('npc-walk-interval');
+    if (walkEl && walkEl.value !== '') state.walkInterval = parseInt(walkEl.value, 10);
+    var radiusEl = gid('npc-walk-radius');
+    if (radiusEl && radiusEl.value !== '') state.walkRadius = parseInt(radiusEl.value, 10);
+    var greetEl = gid('msg-greet');
+    if (greetEl) state.dialogue.greet = greetEl.value;
+    var farewellEl = gid('msg-farewell');
+    if (farewellEl) state.dialogue.farewell = farewellEl.value;
+    var walkawayEl = gid('msg-walkaway');
+    if (walkawayEl) state.dialogue.walkaway = walkawayEl.value;
+
+    if (!String(state.name || '').trim()) {
+        if (existingNpc && existingNpc.state && existingNpc.state.name) {
+            state.name = existingNpc.state.name;
+        } else if (existingNpc) {
+            state.name = filenameToNpcName(existingNpc.sourceFilename || existingNpc.filename || existingNpc.relativePath);
+        }
+    }
+    return state;
+}
+
+async function persistNpcState(index, state, options) {
+    options = options || {};
+    var silent = options.silent === true;
+    var npc = window.NPC.loadedNpcs[index];
+    if (!npc) return false;
+
+    var savePath = getSavePathForNpc(npc, state);
+    npc.state = state;
+    npc.relativePath = savePath;
+    if (!npc.sourceFilename) npc.sourceFilename = npc.filename;
+    npc.filename = savePath.split('/').pop();
+
+    if (typeof window.generateLUA !== 'function') {
+        if (!silent) alert('Generator not loaded');
+        return false;
+    }
+
+    var lua = window.generateLUA(state);
+    var dir = window.NPC.folderHandle;
+    if (dir && await ensureDirectoryWritePermission(dir)) {
+        try {
+            await writeTextFileToDir(dir, savePath, lua);
+            if (!silent) flashSaveButton('Saved!');
+            return true;
+        } catch (err) {
+            if (!silent) alert('Could not save file: ' + err.message);
+            return false;
+        }
+    }
+
+    if (!silent) {
+        downloadNpcLua(lua, state);
+        flashSaveButton('Downloaded');
+    }
+    return true;
+}
+
+var _npcLoadSerial = 0;
+
+window.saveNPC = async function (options) {
+    options = options || {};
+    var silent = options.silent === true;
+    var index = options.npcIndex != null ? options.npcIndex : window.NPC.activeLoadedIndex;
+    var npc = index != null ? window.NPC.loadedNpcs[index] : null;
+    var state = collectEditorState(npc);
+    window.NPC.state = cloneNpcState(state);
+
+    if (npc) {
+        var saved = await persistNpcState(index, state, options);
+        window.renderNpcBrowser();
+        return saved;
+    }
+
+    if (typeof window.generateLUA !== 'function') {
+        if (!silent) alert('Generator not loaded');
+        return false;
+    }
+
+    var lua = window.generateLUA(state);
+    var dir = window.NPC.folderHandle;
+    var savePath = getSavePathForNpc(null, state);
+    if (dir && await ensureDirectoryWritePermission(dir)) {
+        try {
+            await writeTextFileToDir(dir, savePath, lua);
+            if (!silent) flashSaveButton('Saved!');
+            return true;
+        } catch (err) {
+            if (!silent) alert('Could not save file: ' + err.message);
+            return false;
+        }
+    }
+
+    if (!silent) {
+        downloadNpcLua(lua, state);
+        flashSaveButton('Downloaded');
+    }
+    return true;
+};
+
+// Modal (kept for download preview via help flow if needed)
 window.showLuaModal = function () {
     var modal = gid('output-modal');
     if (!modal) { alert('Modal not found'); return; }
@@ -165,6 +386,489 @@ window.resetNPC = function () {
     if (confirm('Reset all data?')) window.location.reload();
 };
 
+// NPC folder browser
+var DEFAULT_OUTFIT = { lookType: 128, lookHead: 0, lookBody: 0, lookLegs: 0, lookFeet: 0 };
+
+function normalizeOutfit(outfit) {
+    outfit = outfit || DEFAULT_OUTFIT;
+    return {
+        lookType: outfit.lookType != null ? outfit.lookType : 128,
+        lookHead: outfit.lookHead != null ? outfit.lookHead : 0,
+        lookBody: outfit.lookBody != null ? outfit.lookBody : 0,
+        lookLegs: outfit.lookLegs != null ? outfit.lookLegs : 0,
+        lookFeet: outfit.lookFeet != null ? outfit.lookFeet : 0
+    };
+}
+
+function cloneNpcState(state) {
+    state = state || {};
+    return {
+        name: state.name || '',
+        walkInterval: state.walkInterval,
+        walkRadius: state.walkRadius,
+        outfit: normalizeOutfit(state.outfit),
+        tradeItems: (state.tradeItems || []).map(function (i) {
+            return { id: i.id, name: i.name, buy: i.buy, sell: i.sell };
+        }),
+        dialogue: {
+            greet: (state.dialogue && state.dialogue.greet) || 'Hello |PLAYERNAME|.',
+            farewell: (state.dialogue && state.dialogue.farewell) || 'Farewell.',
+            walkaway: (state.dialogue && state.dialogue.walkaway) || 'How rude!'
+        },
+        keywords: (state.keywords || []).map(function (k) {
+            return { trigger: k.trigger, response: k.response };
+        })
+    };
+}
+
+function findOutfitFilterButton(category) {
+    var cats = window.OUTFIT_CATEGORIES || [];
+    var idx = cats.indexOf(category);
+    if (idx < 0) return null;
+    return document.querySelectorAll('.outfit-filter-btn')[idx] || null;
+}
+
+function outfitOptionExists(outfitSelect, lookType) {
+    lookType = String(lookType);
+    for (var i = 0; i < outfitSelect.options.length; i++) {
+        if (outfitSelect.options[i].value === lookType) return true;
+    }
+    return false;
+}
+
+function ensureOutfitInSelect(lookType) {
+    lookType = parseInt(lookType, 10) || 128;
+    var outfitSelect = gid('outfit-select');
+    if (!outfitSelect) return lookType;
+
+    if (outfitOptionExists(outfitSelect, lookType)) {
+        outfitSelect.value = String(lookType);
+        return lookType;
+    }
+
+    var data = window.OUTFIT_DATA || {};
+    var info = data[lookType];
+    if (info && info.category && typeof window.filterOutfits === 'function') {
+        window.filterOutfits(info.category, findOutfitFilterButton(info.category), lookType);
+    }
+
+    if (!outfitOptionExists(outfitSelect, lookType)) {
+        var opt = document.createElement('option');
+        opt.value = String(lookType);
+        opt.textContent = info ? (info.name + ' (' + lookType + ')') : ('LookType ' + lookType);
+        outfitSelect.appendChild(opt);
+    }
+
+    outfitSelect.value = String(lookType);
+    return lookType;
+}
+
+function setField(id, value) {
+    var el = gid(id);
+    if (el) el.value = value != null ? value : '';
+}
+
+window.filterOutfits = function (category, btnEl, preferredLookType) {
+    var outfitSelect = gid('outfit-select');
+    if (!outfitSelect) return;
+
+    document.querySelectorAll('.outfit-filter-btn').forEach(function (b) { b.classList.remove('active'); });
+    if (btnEl) btnEl.classList.add('active');
+
+    var source = window.OUTFIT_DATA || {};
+    outfitSelect.innerHTML = '';
+    var ids = Object.keys(source).filter(function (oid) {
+        return !category || source[oid].category === category;
+    }).sort(function (a, b) {
+        return (source[a].name || '').localeCompare(source[b].name || '');
+    });
+
+    ids.forEach(function (oid) {
+        var opt = document.createElement('option');
+        opt.value = oid;
+        opt.textContent = source[oid].name + ' (' + oid + ')';
+        outfitSelect.appendChild(opt);
+    });
+
+    var preferred = preferredLookType != null ? String(preferredLookType) : null;
+    if (preferred && ids.indexOf(preferred) !== -1) {
+        outfitSelect.value = preferred;
+    } else if (ids.length) {
+        outfitSelect.value = ids[0];
+    }
+
+    if (preferredLookType == null) updatePreview();
+};
+
+function paintOutfitThumb(imgEl, outfit) {
+    outfit = normalizeOutfit(outfit);
+    function apply() {
+        if (!window.TibiaSprites || !window.TibiaSprites.ready) return false;
+        var url = window.TibiaSprites.getOutfitDataURL(outfit.lookType, {
+            head: outfit.lookHead,
+            body: outfit.lookBody,
+            legs: outfit.lookLegs,
+            feet: outfit.lookFeet,
+            direction: 2
+        });
+        if (url) imgEl.src = url;
+        else imgEl.removeAttribute('src');
+        return true;
+    }
+    if (apply()) return;
+    if (window.TibiaSprites && window.TibiaSprites.whenReady) {
+        window.TibiaSprites.whenReady(apply);
+    }
+}
+
+function repaintAllNpcThumbs() {
+    var list = gid('npc-browser-list');
+    if (!list) return;
+    list.querySelectorAll('.npc-browser-item').forEach(function (btn) {
+        var idx = parseInt(btn.dataset.index, 10);
+        var npc = window.NPC.loadedNpcs[idx];
+        if (!npc) return;
+        var img = btn.querySelector('.npc-browser-thumb img');
+        if (img) paintOutfitThumb(img, npc.state.outfit);
+    });
+}
+
+function syncEditorFromState(state) {
+    state = cloneNpcState(state);
+    window.NPC.state = state;
+
+    gid('npc-name').value = state.name;
+    gid('npc-walk-interval').value = state.walkInterval != null ? state.walkInterval : '';
+    gid('npc-walk-radius').value = state.walkRadius != null ? state.walkRadius : '';
+    gid('msg-greet').value = state.dialogue.greet;
+    gid('msg-farewell').value = state.dialogue.farewell;
+    gid('msg-walkaway').value = state.dialogue.walkaway;
+
+    state.outfit.lookType = ensureOutfitInSelect(state.outfit.lookType);
+    window.NPC.state.outfit.lookType = state.outfit.lookType;
+    updatePreview();
+    refreshPaletteSelection();
+    window.renderTradeItems();
+    resetKeywordForm();
+    window.renderKeywords();
+}
+
+function refreshPaletteSelection() {
+    var val = 0;
+    var p = window.NPC.activeColorPart;
+    var o = window.NPC.state.outfit;
+    if (p === 'head') val = o.lookHead;
+    if (p === 'body') val = o.lookBody;
+    if (p === 'legs') val = o.lookLegs;
+    if (p === 'feet') val = o.lookFeet;
+
+    document.querySelectorAll('.color-block').forEach(function (b) {
+        b.classList.remove('selected');
+        if (b.dataset.colorId == val) b.classList.add('selected');
+    });
+}
+
+window.renderNpcBrowser = function () {
+    var list = gid('npc-browser-list');
+    var countEl = gid('npc-browser-count');
+    var folderEl = gid('npc-browser-folder');
+    if (!list) return;
+
+    var npcs = window.NPC.loadedNpcs || [];
+    if (folderEl) {
+        folderEl.textContent = window.NPC.loadedFolderName || '';
+    }
+    if (countEl) {
+        countEl.textContent = npcs.length ? (npcs.length + ' NPC' + (npcs.length === 1 ? '' : 's')) : '';
+    }
+
+    list.innerHTML = '';
+    if (!npcs.length) {
+        list.innerHTML = '<div class="npc-browser-empty">Select a folder of NPC .xml or .lua files from your server.</div>';
+        return;
+    }
+
+    npcs.forEach(function (npc, index) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'npc-browser-item' + (window.NPC.activeLoadedIndex === index ? ' active' : '');
+        btn.dataset.index = String(index);
+
+        var thumb = document.createElement('div');
+        thumb.className = 'npc-browser-thumb';
+        var img = document.createElement('img');
+        img.alt = '';
+        paintOutfitThumb(img, npc.state.outfit);
+        thumb.appendChild(img);
+
+        var nameEl = document.createElement('div');
+        nameEl.className = 'npc-browser-name';
+        nameEl.textContent = getNpcDisplayName(npc);
+
+        btn.appendChild(thumb);
+        btn.appendChild(nameEl);
+        list.appendChild(btn);
+    });
+
+    repaintAllNpcThumbs();
+};
+
+window.loadNPCIntoEditor = async function (index) {
+    var serial = ++_npcLoadSerial;
+    var prevIndex = window.NPC.activeLoadedIndex;
+
+    if (prevIndex !== null && prevIndex !== index) {
+        var prevNpc = window.NPC.loadedNpcs[prevIndex];
+        var snapshot = collectEditorState(prevNpc);
+        prevNpc.state = snapshot;
+        await persistNpcState(prevIndex, snapshot, { silent: true });
+        if (serial !== _npcLoadSerial) return;
+    }
+
+    var npc = window.NPC.loadedNpcs[index];
+    if (!npc) return;
+
+    window.NPC.activeLoadedIndex = index;
+    syncEditorFromState(npc.state);
+    window.renderNpcBrowser();
+};
+
+function fileRelativePath(file) {
+    return (file.relativePath || file.webkitRelativePath || file.name || '').replace(/\\/g, '/');
+}
+
+function shouldSkipNpcPath(path) {
+    var lower = path.toLowerCase();
+    return lower.indexOf('/lib/') !== -1 || lower.indexOf('lib/') === 0;
+}
+
+function scriptKeyFromPath(path) {
+    var parts = path.split('/');
+    return parts[parts.length - 1].toLowerCase();
+}
+
+window.processNpcFiles = async function (files, folderName) {
+    var allFiles = Array.from(files);
+    var xmlFiles = [];
+    var luaFiles = [];
+    var scriptMap = {};
+
+    allFiles.forEach(function (file) {
+        var path = fileRelativePath(file);
+        if (shouldSkipNpcPath(path)) return;
+        var lower = file.name.toLowerCase();
+        if (lower.endsWith('.xml')) {
+            xmlFiles.push({ file: file, path: path });
+        } else if (lower.endsWith('.lua')) {
+            luaFiles.push({ file: file, path: path });
+            scriptMap[scriptKeyFromPath(path)] = file;
+        }
+    });
+
+    window.NPC.loadedNpcs = [];
+    window.NPC.activeLoadedIndex = null;
+    window.NPC.loadedFolderName = folderName || '';
+
+    var xmlScriptNames = {};
+
+    for (var i = 0; i < xmlFiles.length; i++) {
+        try {
+            var xmlEntry = xmlFiles[i];
+            var xmlText = await xmlEntry.file.text();
+            var state = window.parseNpcXml(xmlText);
+
+            var doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+            var npcEl = doc.querySelector('npc');
+            var scriptAttr = npcEl ? (npcEl.getAttribute('script') || '') : '';
+            if (scriptAttr) {
+                xmlScriptNames[scriptAttr.toLowerCase()] = true;
+                var scriptFile = scriptMap[scriptAttr.toLowerCase()];
+                if (scriptFile) {
+                    var scriptText = await scriptFile.text();
+                    var kw = window.parseNpcScriptKeywords(scriptText);
+                    if (kw.length) state.keywords = kw;
+                }
+            }
+
+            if (!state.name) {
+                state.name = xmlEntry.file.name.replace(/\.xml$/i, '');
+            }
+            state.outfit = normalizeOutfit(state.outfit);
+            window.NPC.loadedNpcs.push({
+                filename: xmlEntry.file.name,
+                sourceFilename: xmlEntry.file.name,
+                relativePath: xmlEntry.path,
+                state: state
+            });
+        } catch (err) {
+            console.warn('Failed to parse ' + xmlFiles[i].file.name, err);
+        }
+    }
+
+    for (var j = 0; j < luaFiles.length; j++) {
+        var luaEntry = luaFiles[j];
+        var luaName = luaEntry.file.name.toLowerCase();
+        if (xmlScriptNames[luaName]) continue;
+        if (luaEntry.path.toLowerCase().indexOf('/scripts/') !== -1 ||
+            luaEntry.path.toLowerCase().indexOf('scripts/') === 0) {
+            continue;
+        }
+
+        try {
+            var luaText = await luaEntry.file.text();
+            if (!window.isRevscriptNpcLua(luaText)) continue;
+
+            var luaState = window.parseNpcLua(luaText);
+            if (!luaState.name) {
+                luaState.name = luaEntry.file.name.replace(/\.lua$/i, '');
+            }
+            luaState.outfit = normalizeOutfit(luaState.outfit);
+            window.NPC.loadedNpcs.push({
+                filename: luaEntry.file.name,
+                sourceFilename: luaEntry.file.name,
+                relativePath: luaEntry.path,
+                state: luaState
+            });
+        } catch (err2) {
+            console.warn('Failed to parse ' + luaEntry.file.name, err2);
+        }
+    }
+
+    window.NPC.loadedNpcs.sort(function (a, b) {
+        return (a.state.name || a.filename).localeCompare(b.state.name || b.filename, undefined, { sensitivity: 'base' });
+    });
+
+    window.renderNpcBrowser();
+};
+
+var NPC_FOLDER_DB = 'sora-npcmaker';
+var NPC_FOLDER_STORE = 'handles';
+var NPC_FOLDER_KEY = 'npc-folder';
+
+function openNpcFolderDb() {
+    return new Promise(function (resolve, reject) {
+        var req = indexedDB.open(NPC_FOLDER_DB, 1);
+        req.onupgradeneeded = function () {
+            req.result.createObjectStore(NPC_FOLDER_STORE);
+        };
+        req.onerror = function () { reject(req.error); };
+        req.onsuccess = function () { resolve(req.result); };
+    });
+}
+
+function saveNpcFolderHandle(handle) {
+    return openNpcFolderDb().then(function (db) {
+        return new Promise(function (resolve, reject) {
+            var tx = db.transaction(NPC_FOLDER_STORE, 'readwrite');
+            tx.objectStore(NPC_FOLDER_STORE).put(handle, NPC_FOLDER_KEY);
+            tx.oncomplete = function () { resolve(); };
+            tx.onerror = function () { reject(tx.error); };
+        });
+    });
+}
+
+function loadNpcFolderHandle() {
+    return openNpcFolderDb().then(function (db) {
+        return new Promise(function (resolve, reject) {
+            var tx = db.transaction(NPC_FOLDER_STORE, 'readonly');
+            var req = tx.objectStore(NPC_FOLDER_STORE).get(NPC_FOLDER_KEY);
+            req.onsuccess = function () { resolve(req.result || null); };
+            req.onerror = function () { reject(req.error); };
+        });
+    });
+}
+
+function clearNpcFolderHandle() {
+    return openNpcFolderDb().then(function (db) {
+        return new Promise(function (resolve, reject) {
+            var tx = db.transaction(NPC_FOLDER_STORE, 'readwrite');
+            tx.objectStore(NPC_FOLDER_STORE).delete(NPC_FOLDER_KEY);
+            tx.oncomplete = function () { resolve(); };
+            tx.onerror = function () { reject(tx.error); };
+        });
+    });
+}
+
+async function ensureDirectoryReadPermission(dir) {
+    if (!dir || typeof dir.queryPermission !== 'function') return false;
+    var perm = await dir.queryPermission({ mode: 'read' });
+    if (perm === 'granted') return true;
+    if (perm === 'denied') return false;
+    return (await dir.requestPermission({ mode: 'read' })) === 'granted';
+}
+
+async function ensureDirectoryWritePermission(dir) {
+    if (!dir || typeof dir.queryPermission !== 'function') return false;
+    var perm = await dir.queryPermission({ mode: 'readwrite' });
+    if (perm === 'granted') return true;
+    if (perm === 'denied') return false;
+    return (await dir.requestPermission({ mode: 'readwrite' })) === 'granted';
+}
+
+async function collectNpcFilesFromDir(dir, files, basePath) {
+    for await (var entry of dir.values()) {
+        var rel = (basePath || '') + entry.name;
+        if (entry.kind === 'file') {
+            var lower = entry.name.toLowerCase();
+            if (lower.endsWith('.xml') || lower.endsWith('.lua')) {
+                var file = await entry.getFile();
+                file.relativePath = rel;
+                files.push(file);
+            }
+        } else if (entry.kind === 'directory' && entry.name.toLowerCase() !== 'lib') {
+            await collectNpcFilesFromDir(await entry.getDirectoryHandle(), files, rel + '/');
+        }
+    }
+}
+
+async function loadNpcFolderFromHandle(dir, persist) {
+    var files = [];
+    await collectNpcFilesFromDir(dir, files, '');
+    window.NPC.folderHandle = dir;
+    await window.processNpcFiles(files, dir.name);
+    if (persist !== false) {
+        try {
+            await saveNpcFolderHandle(dir);
+        } catch (err) {
+            console.warn('Could not save NPC folder handle', err);
+        }
+    }
+}
+
+window.restoreSavedNpcFolder = async function () {
+    if (!window.showDirectoryPicker || !window.indexedDB) return;
+    try {
+        var dir = await loadNpcFolderHandle();
+        if (!dir) return;
+        if (!(await ensureDirectoryReadPermission(dir))) return;
+        window.NPC.folderHandle = dir;
+        await loadNpcFolderFromHandle(dir, false);
+    } catch (err) {
+        console.warn('Could not restore saved NPC folder', err);
+    }
+};
+
+window.pickNpcFolder = async function () {
+    if (window.showDirectoryPicker) {
+        try {
+            var pickerOpts = { id: 'sora-npcmaker-npc-folder', mode: 'readwrite' };
+            var savedDir = await loadNpcFolderHandle();
+            if (savedDir) pickerOpts.startIn = savedDir;
+            var dir = await window.showDirectoryPicker(pickerOpts);
+            await loadNpcFolderFromHandle(dir, true);
+        } catch (err) {
+            if (err && err.name !== 'AbortError') {
+                console.error(err);
+                alert('Could not read folder: ' + err.message);
+            }
+        }
+        return;
+    }
+
+    var input = gid('npc-folder-input');
+    if (input) input.click();
+};
+
 // Catalog
 window.renderCatalog = function (category, activeBtnEl) {
     document.querySelectorAll('#category-filters .cat-btn').forEach(function (b) { b.classList.remove('highlight'); });
@@ -174,14 +878,20 @@ window.renderCatalog = function (category, activeBtnEl) {
     if (!grid) return;
     grid.innerHTML = '';
 
-    Object.keys(APP_DATA.items).forEach(function (id) {
-        var info = APP_DATA.items[id];
-        if (info.category !== category) return;
+    // Coarse OTB groups can be very large (the "Misc" bucket holds thousands of
+    // items), so cap how many icons we render at once and steer users to search.
+    var CATALOG_LIMIT = 500;
+    var catalogItems = (window.APP_DATA && window.APP_DATA.items) || {};
+    var matches = Object.keys(catalogItems).filter(function (id) {
+        return catalogItems[id].category === category;
+    });
 
+    matches.slice(0, CATALOG_LIMIT).forEach(function (id) {
+        var info = catalogItems[id];
         var div = document.createElement('div');
         div.style.cssText = 'text-align:center;cursor:pointer;padding:5px;border:1px solid transparent;border-radius:3px;';
         div.innerHTML =
-            '<img src="items/' + window.sanitize(id) + '.gif" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.src=\'\'" title="' + window.sanitize(info.name) + '">' +
+            '<img data-sprite-id="' + window.sanitize(id) + '" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" title="' + window.sanitize(info.name) + '">' +
             '<div style="font-size:10px;color:#ad9372;margin-top:3px;word-break:break-all;">' + window.sanitize(info.name) + '</div>';
 
         div.onmouseover = function () { div.style.background = 'rgba(255,255,255,0.08)'; div.style.borderColor = 'var(--accent)'; };
@@ -195,6 +905,16 @@ window.renderCatalog = function (category, activeBtnEl) {
         }(id, info.name));
         grid.appendChild(div);
     });
+
+    if (matches.length > CATALOG_LIMIT) {
+        var note = document.createElement('div');
+        note.style.cssText = 'grid-column:1/-1;color:#888;font-size:11px;padding:8px;text-align:center;';
+        note.textContent = 'Showing first ' + CATALOG_LIMIT + ' of ' + matches.length +
+            ' items — use the search box above to find a specific item.';
+        grid.appendChild(note);
+    }
+
+    if (window.TibiaSprites) window.TibiaSprites.decorate(grid);
 };
 
 // Autocomplete
@@ -265,7 +985,7 @@ function initAutocomplete() {
                 itemDiv.style.cssText = 'display:flex; align-items:center; gap:10px; padding:8px 12px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.05);';
                 
                 itemDiv.innerHTML = 
-                    '<img src="items/' + window.sanitize(res.id) + '.gif" style="width:24px;height:24px;image-rendering:pixelated;" onerror="this.style.visibility=\'hidden\'">' +
+                    '<img data-sprite-id="' + window.sanitize(res.id) + '" style="width:24px;height:24px;image-rendering:pixelated;">' +
                     '<div style="flex:1; font-size:13px; color:#eee;">' + window.sanitize(res.name) + '</div>' +
                     '<div style="font-size:11px; color:#666;">' + window.sanitize(res.id) + '</div>';
                 
@@ -278,6 +998,7 @@ function initAutocomplete() {
                 dropdown.appendChild(itemDiv);
             });
 
+            if (window.TibiaSprites) window.TibiaSprites.decorate(dropdown);
             dropdown.style.display = 'block';
             dropdown.style.zIndex = '9999999';
         } else {
@@ -377,20 +1098,14 @@ window.randomizeColors = function(mode) {
     window.NPC.state.outfit.lookLegs = rand();
     window.NPC.state.outfit.lookFeet = rand();
 
-    // 2. Randomize Outfit (only for 'full' mode)
+    // 2. Randomize Outfit (only for 'full' mode) — pick any option currently in
+    // the dropdown so it stays within the active outfit category.
     if (mode === 'full') {
-        var activeFilterBtn = document.querySelector('.outfit-filter-btn.active');
-        var gender = activeFilterBtn ? activeFilterBtn.dataset.filter : 'male';
-        
-        var source = (typeof OUTFIT_DATA !== 'undefined') ? OUTFIT_DATA : {};
-        var validOutfits = Object.keys(source).filter(function(id) {
-            return source[id].type === gender && !(/^ID \d+$/.test(source[id].name));
-        });
-
-        if (validOutfits.length > 0) {
-            var randomOutfitId = validOutfits[Math.floor(Math.random() * validOutfits.length)];
-            gid('outfit-select').value = randomOutfitId;
-            window.NPC.state.outfit.lookType = parseInt(randomOutfitId);
+        var select = gid('outfit-select');
+        if (select && select.options.length > 0) {
+            var randomOpt = select.options[Math.floor(Math.random() * select.options.length)];
+            select.value = randomOpt.value;
+            window.NPC.state.outfit.lookType = parseInt(randomOpt.value, 10);
         }
     }
 
@@ -410,25 +1125,27 @@ window.randomizeColors = function(mode) {
 };
 
 
-// Preview
+// Preview — rendered locally from the .spr (see sprites.js).
 function updatePreview() {
     var outfitSelect = gid('outfit-select');
     var previewImg   = gid('preview-outfit');
     if (!outfitSelect || !previewImg) return;
-    var type   = outfitSelect.value || '128';
-    var a1     = gid('addon1').checked ? 1 : 0;
-    var a2     = gid('addon2').checked ? 2 : 0;
-    var addons = a1 + a2;
+    var type   = parseInt(outfitSelect.value || '128', 10);
     var o      = window.NPC.state.outfit;
-    var mountChecked = gid('mount-check').checked;
-    var mountId = mountChecked ? (gid('mount-select') ? gid('mount-select').value || '0' : '0') : '0';
-    previewImg.src =
-        'https://outfit-images-oracle.ots.me/latest_walk/animoutfit.php?id=' + type +
-        '&addons=' + addons + '&head=' + o.lookHead + '&body=' + o.lookBody +
-        '&legs=' + o.lookLegs + '&feet=' + o.lookFeet + '&mount=' + mountId + '&direction=3';
-    window.NPC.state.outfit.lookType   = parseInt(type);
-    window.NPC.state.outfit.lookAddons = addons;
-    window.NPC.state.outfit.mount      = parseInt(mountId);
+
+    window.NPC.state.outfit.lookType = type;
+
+    if (window.TibiaSprites && window.TibiaSprites.ready) {
+        var url = window.TibiaSprites.getOutfitDataURL(type, {
+            head: o.lookHead, body: o.lookBody, legs: o.lookLegs, feet: o.lookFeet,
+            direction: 2
+        });
+        if (url) {
+            previewImg.src = url;
+        } else {
+            previewImg.removeAttribute('src');
+        }
+    }
 }
 
 // Initialization
@@ -444,105 +1161,37 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
-    // Outfit dropdown — powered by OUTFIT_DATA
+    // Outfit dropdown + filter buttons — powered by OUTFIT_DATA (outfits.xml).
     var outfitSelect = gid('outfit-select');
 
-    window.filterOutfits = function (type, btnEl) {
-        // Highlight active button
-        document.querySelectorAll('.outfit-filter-btn').forEach(function (b) { b.classList.remove('active'); });
-        if (btnEl) btnEl.classList.add('active');
+    // Builds the outfit category buttons, defaulting to the group that contains
+    // the standard Civilian (128) outfit and pre-selecting it when present.
+    function buildOutfitFilters() {
+        var container = gid('outfit-type-filter');
+        if (!container) return;
+        container.innerHTML = '';
+        var cats = window.OUTFIT_CATEGORIES || [];
+        var data = window.OUTFIT_DATA || {};
+        var defaultCat = (data[128] && data[128].category) || cats[0];
 
-        outfitSelect.innerHTML = '';
-        var source = (typeof OUTFIT_DATA !== 'undefined') ? OUTFIT_DATA : {};
-        var firstId = null;
-
-        Object.keys(source).forEach(function (oid) {
-            var info = source[oid];
-            if (info.type !== type) return;
-            // Skip placeholder entries with no real name ("ID XXX")
-            if (/^ID \d+$/.test(info.name)) return;
-            
-            var opt = document.createElement('option');
-            opt.value = oid;
-            opt.textContent = info.name + ' (' + oid + ')';
-            
-            // Auto-select 128 for male, or the first available for others
-            if (!firstId) firstId = oid;
-            if (oid === '128' && type === 'male') {
-                opt.selected = true;
-                firstId = oid;
-            }
-            outfitSelect.appendChild(opt);
+        cats.forEach(function (cat) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'rpg-btn outfit-filter-btn' + (cat === defaultCat ? ' active' : '');
+            btn.textContent = cat.replace(/\s*Outfits$/i, '');
+            btn.onclick = (function (c, b) { return function () { window.filterOutfits(c, b); }; }(cat, btn));
+            container.appendChild(btn);
         });
 
-        // Fallback: if OUTFIT_DATA not available, use APP_DATA
-        if (outfitSelect.options.length === 0 && typeof APP_DATA !== 'undefined' && APP_DATA.outfits) {
-            APP_DATA.outfits.forEach(function (o) {
-                var opt = document.createElement('option');
-                opt.value = o;
-                var name = (APP_DATA.outfits_map && APP_DATA.outfits_map[o]) ? APP_DATA.outfits_map[o] : 'Outfit ID: ' + o;
-                opt.textContent = name + ' (' + o + ')';
-                if (!firstId) firstId = o;
-                if (o == '128') {
-                    opt.selected = true;
-                    firstId = o;
-                }
-                outfitSelect.appendChild(opt);
-            });
-        }
-
-        // Force selection of the first item matching the filter
-        if (type !== 'male' && firstId) {
-            outfitSelect.value = firstId;
-        }
-
-        updatePreview();
-    };
-
-    // Initial load — show male outfits
-    window.filterOutfits('male', document.querySelector('.outfit-filter-btn[data-filter="male"]'));
-
-    outfitSelect.addEventListener('change', updatePreview);
-    gid('addon1').addEventListener('change', updatePreview);
-    gid('addon2').addEventListener('change', updatePreview);
-    gid('mount-check').addEventListener('change', function () {
-        var group = gid('mount-selector-group');
-        if (group) group.style.display = this.checked ? 'block' : 'none';
-        updatePreview();
-    });
-    gid('mount-select').addEventListener('change', updatePreview);
-
-    // Autocomplete
-    initAutocomplete();
-    // Safety retry in case of DOM lag
-    setTimeout(initAutocomplete, 500); 
-
-    // Mounts
-    var mountSel = gid('mount-select');
-    if (mountSel && typeof APP_DATA !== 'undefined' && APP_DATA.mounts_map) {
-        var mountIds = Object.keys(APP_DATA.mounts_map).sort(function(a,b){ return parseInt(a)-parseInt(b); });
-        mountIds.forEach(function (mid) {
-            var opt = document.createElement('option');
-            opt.value = mid;
-            var mname = APP_DATA.mounts_map[mid] || 'Mount ' + mid;
-            opt.textContent = mname + ' (' + mid + ')';
-            mountSel.appendChild(opt);
-        });
+        window.filterOutfits(defaultCat, container.querySelector('.outfit-filter-btn.active'));
+        if (data[128]) { outfitSelect.value = '128'; updatePreview(); }
     }
 
-
-    initPalette();
-    updatePreview();
-
-
-    // Category buttons
-    if (typeof APP_DATA !== 'undefined' && APP_DATA.categories) {
+    function buildCategoryButtons() {
         var filters = gid('category-filters');
-        var categories = APP_DATA.categories;
-        
-        // Clear existing filters if any (safety)
+        var categories = (window.APP_DATA && window.APP_DATA.categories) || [];
+        if (!filters) return;
         filters.innerHTML = '';
-
         categories.forEach(function (cat, idx) {
             var btn = document.createElement('button');
             btn.type = 'button';
@@ -551,20 +1200,76 @@ document.addEventListener('DOMContentLoaded', function () {
             btn.onclick = (function (c, b) { return function () { window.renderCatalog(c, b); }; }(cat, btn));
             filters.appendChild(btn);
         });
-        
-        if (filters && filters.firstElementChild) {
+        if (filters.firstElementChild) {
             window.renderCatalog(categories[0], filters.firstElementChild);
         }
     }
 
+    outfitSelect.addEventListener('change', updatePreview);
+
+    // Autocomplete (reads APP_DATA lazily, so it's safe to init now).
     initAutocomplete();
+    setTimeout(initAutocomplete, 500);
+
+    initPalette();
+
+    // The catalog and outfit list depend on the async game files.
+    function buildGameDataUI() {
+        buildOutfitFilters();
+        buildCategoryButtons();
+        updatePreview();
+    }
+    if (window.APP_DATA && window.OUTFIT_DATA) {
+        buildGameDataUI();
+    } else {
+        window.addEventListener('gamedata-ready', buildGameDataUI);
+    }
 
     // Basic config fields
     gid('npc-name').addEventListener('input',          function (e) { window.NPC.state.name                  = e.target.value; });
     gid('npc-walk-interval').addEventListener('input', function (e) { window.NPC.state.walkInterval           = parseInt(e.target.value); });
-    gid('npc-health').addEventListener('input',        function (e) { window.NPC.state.health                 = parseInt(e.target.value); });
     gid('npc-walk-radius').addEventListener('input',   function (e) { window.NPC.state.walkRadius             = parseInt(e.target.value); });
     gid('msg-greet').addEventListener('input',         function (e) { window.NPC.state.dialogue.greet         = e.target.value; });
     gid('msg-farewell').addEventListener('input',      function (e) { window.NPC.state.dialogue.farewell       = e.target.value; });
     gid('msg-walkaway').addEventListener('input',      function (e) { window.NPC.state.dialogue.walkaway       = e.target.value; });
+
+    var kwResponse = gid('kw-response');
+    if (kwResponse) {
+        kwResponse.addEventListener('input', autoResizeKwResponse);
+        autoResizeKwResponse();
+    }
+
+    var folderInput = gid('npc-folder-input');
+    if (folderInput) {
+        folderInput.addEventListener('change', function () {
+            if (!folderInput.files || !folderInput.files.length) return;
+            window.NPC.folderHandle = null;
+            var folderName = '';
+            var first = folderInput.files[0];
+            if (first.webkitRelativePath) {
+                folderName = first.webkitRelativePath.split('/')[0] || first.webkitRelativePath.split('\\')[0] || '';
+            }
+            window.processNpcFiles(folderInput.files, folderName).then(function () {
+                folderInput.value = '';
+            });
+        });
+    }
+
+    var npcBrowserList = gid('npc-browser-list');
+    if (npcBrowserList) {
+        npcBrowserList.addEventListener('click', function (e) {
+            var item = e.target.closest('.npc-browser-item');
+            if (!item || item.dataset.index == null) return;
+            window.loadNPCIntoEditor(parseInt(item.dataset.index, 10));
+        });
+    }
+
+    window.addEventListener('gamedata-ready', function () {
+        if (window.NPC.loadedNpcs && window.NPC.loadedNpcs.length) {
+            window.renderNpcBrowser();
+            repaintAllNpcThumbs();
+        }
+    });
+
+    window.restoreSavedNpcFolder();
 });
