@@ -96,3 +96,134 @@ window.generateLUA = function(state) {
 	
 	return lua;
 };
+
+// Classic TFS / XML NPC script (NpcHandler + ShopModule)
+window.generateClassicScript = function (state, existingSource) {
+	const safeLua = (str) => {
+		if (!str) return '';
+		return String(str)
+			.replace(/\\/g, '\\\\')
+			.replace(/"/g, '\\"')
+			.replace(/\n/g, '\\n');
+	};
+
+	const classicItemLabel = (name) => (name || 'item').toLowerCase().replace(/'/g, "\\'");
+	const classicKeywordTrigger = (str) => String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+	const extractVoiceBlock = (source) => {
+		if (!source) return '';
+		const m = source.match(/local voices\s*=\s*\{[\s\S]*?\}\s*\r?\nnpcHandler:addModule\(VoiceModule:new\(voices\)\)\s*\r?\n?/);
+		return m ? m[0] + '\n' : '';
+	};
+
+	let lua = 'local keywordHandler = KeywordHandler:new()\n';
+	lua += 'local npcHandler = NpcHandler:new(keywordHandler)\n';
+	lua += 'NpcSystem.parseParameters(npcHandler)\n\n';
+	lua += 'function onCreatureAppear(cid)              npcHandler:onCreatureAppear(cid)            end\n';
+	lua += 'function onCreatureDisappear(cid)           npcHandler:onCreatureDisappear(cid)         end\n';
+	lua += 'function onCreatureSay(cid, type, msg)      npcHandler:onCreatureSay(cid, type, msg)    end\n';
+	lua += 'function onThink()                          npcHandler:onThink()                        end\n\n';
+
+	lua += extractVoiceBlock(existingSource);
+
+	if (state.tradeItems && state.tradeItems.length > 0) {
+		lua += 'local shopModule = ShopModule:new()\n';
+		lua += 'npcHandler:addModule(shopModule)\n\n';
+		state.tradeItems.forEach((item) => {
+			const label = classicItemLabel(item.name);
+			const id = parseInt(item.id, 10) || 0;
+			if (item.buy > 0) {
+				lua += `shopModule:addBuyableItem({'${label}'}, ${id}, ${parseInt(item.buy, 10)})\n`;
+			}
+			if (item.sell > 0) {
+				lua += `shopModule:addSellableItem({'${label}'}, ${id}, ${parseInt(item.sell, 10)})\n`;
+			}
+		});
+		lua += '\n';
+	}
+
+	if (state.keywords && state.keywords.length > 0) {
+		state.keywords.forEach((kw) => {
+			lua += `keywordHandler:addKeyword({'${classicKeywordTrigger(kw.trigger)}'}, StdModule.say, {npcHandler = npcHandler, onlyFocus = true, text = "${safeLua(kw.response)}"})\n`;
+		});
+		lua += '\n';
+	}
+
+	lua += 'npcHandler:setCallback(CALLBACK_MESSAGE_DEFAULT, creatureSayCallback)\n';
+	lua += 'npcHandler:addModule(FocusModule:new())\n';
+	return lua;
+};
+
+// Patch XML NPC definition (outfit, walk, dialogue parameters)
+window.generateNpcXml = function (state, existingXml) {
+	if (!existingXml) return existingXml || '';
+
+	const doc = new DOMParser().parseFromString(existingXml, 'text/xml');
+	if (doc.querySelector('parsererror')) return existingXml;
+
+	const npc = doc.querySelector('npc');
+	if (!npc) return existingXml;
+
+	const escapeXml = (str) => String(str || '')
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+
+	npc.setAttribute('name', state.name || '');
+
+	if (state.walkInterval != null && !isNaN(state.walkInterval)) {
+		npc.setAttribute('walkinterval', String(state.walkInterval));
+	}
+	if (state.walkRadius != null && !isNaN(state.walkRadius)) {
+		npc.setAttribute('walkradius', String(state.walkRadius));
+	}
+
+	let look = npc.querySelector('look');
+	if (!look) {
+		look = doc.createElement('look');
+		const health = npc.querySelector('health');
+		if (health && health.nextSibling) {
+			npc.insertBefore(look, health.nextSibling);
+		} else {
+			npc.appendChild(look);
+		}
+	}
+
+	const o = state.outfit || {};
+	look.setAttribute('type', String(o.lookType != null ? o.lookType : 128));
+	look.setAttribute('head', String(o.lookHead != null ? o.lookHead : 0));
+	look.setAttribute('body', String(o.lookBody != null ? o.lookBody : 0));
+	look.setAttribute('legs', String(o.lookLegs != null ? o.lookLegs : 0));
+	look.setAttribute('feet', String(o.lookFeet != null ? o.lookFeet : 0));
+
+	let params = npc.querySelector('parameters');
+	if (!params) {
+		params = doc.createElement('parameters');
+		npc.appendChild(params);
+	}
+
+	const setParam = (key, value) => {
+		let el = null;
+		const all = params.querySelectorAll('parameter');
+		for (let i = 0; i < all.length; i++) {
+			if ((all[i].getAttribute('key') || '').toLowerCase() === key) {
+				el = all[i];
+				break;
+			}
+		}
+		if (!el) {
+			el = doc.createElement('parameter');
+			el.setAttribute('key', key);
+			params.appendChild(el);
+		}
+		el.setAttribute('value', escapeXml(value));
+	};
+
+	const d = state.dialogue || {};
+	setParam('message_greet', d.greet || 'Hello |PLAYERNAME|.');
+	setParam('message_farewell', d.farewell || 'Farewell.');
+	setParam('message_walkaway', d.walkaway || 'How rude!');
+
+	return new XMLSerializer().serializeToString(doc);
+};

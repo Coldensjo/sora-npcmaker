@@ -301,13 +301,7 @@ async function persistNpcState(index, state, options) {
     var npc = window.NPC.loadedNpcs[index];
     if (!npc) return false;
 
-    var savePath = getSavePathForNpc(npc, state);
     npc.state = state;
-
-    if (typeof window.generateLUA !== 'function') {
-        if (!silent) alert('Generator not loaded');
-        return false;
-    }
 
     var dir = window.NPC.folderHandle;
     if (!dir) {
@@ -320,8 +314,33 @@ async function persistNpcState(index, state, options) {
     }
 
     try {
-        var lua = window.generateLUA(state);
-        await writeTextFileToDir(dir, savePath, lua);
+        var format = npc.format || (npc.xmlRelativePath ? 'xml' : 'revscript');
+        if (format === 'xml') {
+            if (typeof window.generateNpcXml !== 'function') {
+                if (!silent) alert('XML generator not loaded');
+                return false;
+            }
+            var xmlPath = npc.xmlRelativePath || npc.relativePath;
+            var xmlContent = window.generateNpcXml(state, npc.xmlSource || '');
+            await writeTextFileToDir(dir, xmlPath, xmlContent);
+            npc.xmlSource = xmlContent;
+
+            if (npc.scriptRelativePath && typeof window.generateClassicScript === 'function') {
+                var scriptContent = window.generateClassicScript(state, npc.scriptSource || '');
+                await writeTextFileToDir(dir, npc.scriptRelativePath, scriptContent);
+                npc.scriptSource = scriptContent;
+            }
+        } else {
+            if (typeof window.generateLUA !== 'function') {
+                if (!silent) alert('Generator not loaded');
+                return false;
+            }
+            var savePath = getSavePathForNpc(npc, state);
+            var lua = window.generateLUA(state);
+            await writeTextFileToDir(dir, savePath, lua);
+            npc.luaSource = lua;
+        }
+
         markNpcSaved(npc, state);
         if (!silent) flashSaveButton('Saved!');
         return true;
@@ -782,16 +801,17 @@ window.processNpcFiles = async function (files, folderName) {
                 var state = window.parseNpcXml(xmlText);
                 var scriptMatch = xmlText.match(/<npc\b[^>]*\sscript\s*=\s*["']([^"']+)["']/i);
                 var scriptAttr = scriptMatch ? scriptMatch[1] : '';
-                var saveRelativePath = xmlEntry.path.replace(/\.xml$/i, '.lua');
+                var scriptPath = scriptAttr ? scriptPathMap[scriptAttr.toLowerCase()] : null;
+                var scriptText = null;
                 if (scriptAttr) {
                     xmlScriptNames[scriptAttr.toLowerCase()] = true;
                     var scriptFile = scriptMap[scriptAttr.toLowerCase()];
-                    var scriptPath = scriptPathMap[scriptAttr.toLowerCase()];
-                    if (scriptPath) saveRelativePath = scriptPath;
                     if (scriptFile) {
-                        var scriptText = await scriptFile.text();
+                        scriptText = await scriptFile.text();
                         var kw = window.parseNpcScriptKeywords(scriptText);
                         if (kw.length) state.keywords = kw;
+                        var trade = window.parseClassicTradeItems(scriptText);
+                        if (trade.length) state.tradeItems = trade;
                     }
                 }
 
@@ -800,10 +820,16 @@ window.processNpcFiles = async function (files, folderName) {
                 }
                 state.outfit = normalizeOutfit(state.outfit);
                 return makeLoadedNpc({
+                    format: 'xml',
                     filename: xmlEntry.file.name,
                     sourceFilename: xmlEntry.file.name,
                     relativePath: xmlEntry.path,
-                    saveRelativePath: saveRelativePath,
+                    xmlRelativePath: xmlEntry.path,
+                    scriptRelativePath: scriptPath || null,
+                    scriptAttr: scriptAttr,
+                    xmlSource: xmlText,
+                    scriptSource: scriptText,
+                    saveRelativePath: scriptPath || xmlEntry.path,
                     state: state
                 });
             } catch (err) {
@@ -837,10 +863,12 @@ window.processNpcFiles = async function (files, folderName) {
                 }
                 luaState.outfit = normalizeOutfit(luaState.outfit);
                 return makeLoadedNpc({
+                    format: 'revscript',
                     filename: entry.file.name,
                     sourceFilename: entry.file.name,
                     relativePath: entry.path,
                     saveRelativePath: entry.path,
+                    luaSource: luaText,
                     state: luaState
                 });
             } catch (err2) {

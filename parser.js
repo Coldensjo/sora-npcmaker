@@ -119,6 +119,34 @@
 
     window.parseNpcScriptKeywords = parseKeywordsFromLua;
 
+    function parseClassicTradeItems(source) {
+        var byId = {};
+        if (!source) return [];
+
+        function upsert(id, name, buy, sell) {
+            id = String(id);
+            if (!byId[id]) {
+                byId[id] = { id: id, name: name || ('item ' + id), buy: 0, sell: 0 };
+            }
+            if (name) byId[id].name = name;
+            if (buy > 0) byId[id].buy = buy;
+            if (sell > 0) byId[id].sell = sell;
+        }
+
+        var buyRe = /addBuyableItem\s*\(\s*\{['"]([^'"]+)['"]\}\s*,\s*(\d+)\s*,\s*(\d+)/gi;
+        var sellRe = /addSellableItem\s*\(\s*\{['"]([^'"]+)['"]\}\s*,\s*(\d+)\s*,\s*(\d+)/gi;
+        var m;
+        while ((m = buyRe.exec(source)) !== null) {
+            upsert(m[2], m[1], parseInt(m[3], 10), 0);
+        }
+        while ((m = sellRe.exec(source)) !== null) {
+            upsert(m[2], m[1], 0, parseInt(m[3], 10));
+        }
+        return Object.keys(byId).map(function (id) { return byId[id]; });
+    }
+
+    window.parseClassicTradeItems = parseClassicTradeItems;
+
     window.parseNpcXml = function (source) {
         var state = baseState();
         if (!source || typeof source !== 'string') return state;
